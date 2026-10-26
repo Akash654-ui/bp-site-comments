@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,11 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.1.1 =
+* Fix: Delete Permanently and Restore in Site Comments > Trash opened the page instead of acting.
+* Trash rows now show WordPress's Restore and Delete Permanently links.
+* Fix: a restored comment came back as a draft and no longer showed on the page.
 
 = 1.1.0 =
 * Interface moved into a Shadow DOM so it works with any theme.

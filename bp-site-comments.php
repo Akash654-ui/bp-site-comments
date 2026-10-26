@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.1.0
+ * Version:           1.1.1
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,7 +19,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.1.0' );
+define( 'BP_SC_VERSION', '1.1.1' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
 
@@ -345,8 +345,11 @@ add_action(
 	function ( $col, $id ) {
 		$c = bp_sc_format( get_post( $id ) );
 		if ( 'bp_comment' === $col ) {
-			$link = add_query_arg( 'bp-comment', $id, $c['page_url'] );
-			echo '<strong><a href="' . esc_url( $link ) . '" target="_blank" rel="noopener">' . esc_html( wp_trim_words( $c['text'], 30, '…' ) ) . '</a></strong>';
+			$text = esc_html( wp_trim_words( $c['text'], 30, '…' ) );
+			// Trashed comments are not linked to the page: the row offers Restore / Delete Permanently instead.
+			echo 'trash' === get_post_status( $id ) || ! $c['page_url']
+				? '<strong>' . $text . '</strong>' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				: '<strong><a href="' . esc_url( add_query_arg( 'bp-comment', $id, $c['page_url'] ) ) . '" target="_blank" rel="noopener">' . $text . '</a></strong>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			if ( $c['snippet'] ) {
 				echo '<br><span style="color:#646970">' . esc_html__( 'On:', 'bp-site-comments' ) . ' “' . esc_html( wp_trim_words( $c['snippet'], 14, '…' ) ) . '”</span>';
 			}
@@ -354,7 +357,6 @@ add_action(
 				/* translators: %d: number of replies. */
 				echo '<br><span style="color:#646970">' . esc_html( sprintf( _n( '%d reply', '%d replies', count( $c['replies'] ), 'bp-site-comments' ), count( $c['replies'] ) ) ) . '</span>';
 			}
-			echo '<div class="row-actions"><a href="' . esc_url( $link ) . '" target="_blank" rel="noopener">' . esc_html__( 'View on page', 'bp-site-comments' ) . '</a> | <a href="' . esc_url( get_delete_post_link( $id ) ) . '">' . esc_html__( 'Trash', 'bp-site-comments' ) . '</a></div>';
 		} elseif ( 'bp_page' === $col ) {
 			echo esc_html( $c['page_title'] ?: bp_sc_page_key( $c['page_url'] ) ) . '<br><code>' . esc_html( bp_sc_page_key( $c['page_url'] ) ) . '</code>';
 		} elseif ( 'bp_status' === $col ) {
@@ -409,15 +411,39 @@ add_action(
 );
 
 // The single edit screen is not useful for these; send people to the page instead.
+// Only for "edit": trash, restore and delete-permanently also go through post.php and must run normally.
 add_action(
 	'load-post.php',
 	function () {
-		$id = (int) ( $_GET['post'] ?? 0 ); // phpcs:ignore WordPress.Security.NonceVerification
-		if ( $id && BP_SC_TYPE === get_post_type( $id ) ) {
+		$id     = (int) ( $_GET['post'] ?? 0 ); // phpcs:ignore WordPress.Security.NonceVerification
+		$action = sanitize_key( $_GET['action'] ?? 'edit' ); // phpcs:ignore WordPress.Security.NonceVerification
+		if ( $id && 'edit' === $action && BP_SC_TYPE === get_post_type( $id ) && 'trash' !== get_post_status( $id ) ) {
 			$page = (string) get_post_meta( $id, '_bp_sc_page_url', true );
 			wp_safe_redirect( $page ? add_query_arg( 'bp-comment', $id, $page ) : admin_url( 'edit.php?post_type=' . BP_SC_TYPE ) );
 			exit;
 		}
 	}
 );
-add_filter( 'post_row_actions', fn( $a, $p ) => BP_SC_TYPE === $p->post_type ? array() : $a, 10, 2 );
+// Restoring from the Trash brings a comment back as it was (WordPress would make it a draft, hiding it from the page).
+add_filter( 'wp_untrash_post_status', fn( $status, $id, $previous ) => BP_SC_TYPE === get_post_type( $id ) ? ( $previous ?: 'publish' ) : $status, 10, 3 );
+
+// Row links: View on page + Trash normally; WordPress's own Restore + Delete Permanently in the Trash.
+add_filter(
+	'post_row_actions',
+	function ( $actions, $post ) {
+		if ( BP_SC_TYPE !== $post->post_type ) {
+			return $actions;
+		}
+		if ( 'trash' === $post->post_status ) {
+			return array_intersect_key( $actions, array_flip( array( 'untrash', 'delete' ) ) );
+		}
+		$page = (string) get_post_meta( $post->ID, '_bp_sc_page_url', true );
+		$keep = array();
+		if ( $page ) {
+			$keep['bp_view'] = '<a href="' . esc_url( add_query_arg( 'bp-comment', $post->ID, $page ) ) . '" target="_blank" rel="noopener">' . esc_html__( 'View on page', 'bp-site-comments' ) . '</a>';
+		}
+		return $keep + array_intersect_key( $actions, array( 'trash' => true ) );
+	},
+	10,
+	2
+);
