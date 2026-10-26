@@ -221,7 +221,6 @@
     bar.hidden = !on;
     if (!on) { hideHl(); closePopover(); setPanel(false); }
     renderPins();
-    try { sessionStorage.setItem('bp-sc-on', on ? '1' : ''); } catch (e) { /* private mode */ }
   };
 
   launcher.addEventListener('click', () => setMode(true));
@@ -501,10 +500,12 @@
   /* ---------------- start ---------------- */
   load().then(() => {
     const wanted = new URLSearchParams(location.search).get('bp-comment');
-    let resume = false;
-    try { resume = sessionStorage.getItem('bp-sc-on') === '1'; } catch (e) { /* private mode */ }
-    if (wanted || resume || location.hash === '#bp-comments') setMode(true);
+    // Comment mode always starts off; only a click (or a link to a specific comment) turns it on.
+    try { sessionStorage.removeItem('bp-sc-on'); } catch (e) { /* storage blocked */ }
     const c = wanted && comments.find((x) => String(x.id) === wanted);
-    if (c) setTimeout(() => focusComment(c), 600);
+    if (c) {
+      setMode(true);
+      setTimeout(() => focusComment(c), 600);
+    }
   });
 })();

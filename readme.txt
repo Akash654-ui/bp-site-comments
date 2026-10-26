@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,9 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.1.2 =
+* Comment mode no longer switches itself back on after a page reload. It starts off on every page and turns on only when clicked.
 
 = 1.1.1 =
 * Fix: Delete Permanently and Restore in Site Comments > Trash opened the page instead of acting.
