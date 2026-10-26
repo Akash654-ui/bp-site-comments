@@ -1,0 +1,27 @@
+# Builds an installable bp-site-comments.zip and attaches it to each GitHub release.
+name: Release zip
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bp-site-comments
+      - name: Build zip
+        run: |
+          cd bp-site-comments
+          rm -rf .git .github .gitignore
+          cd ..
+          zip -r bp-site-comments.zip bp-site-comments
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" bp-site-comments.zip --clobber --repo "${{ github.repository }}"
