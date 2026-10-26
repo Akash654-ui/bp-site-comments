@@ -59,7 +59,10 @@
   };
 
   /* ---------------- the isolated layer ---------------- */
-  const host = h('div', { id: 'bp-site-comments', 'data-bp-sc': '' });
+  // data-lenis-prevent: smooth-scroll libraries (Lenis, used by MouseWheel Smooth Scroll and many
+  // themes) would otherwise swallow the wheel, so the comment list and long threads could not scroll.
+  // The layer itself lets pointer events through, so the page keeps its smooth scrolling.
+  const host = h('div', { id: 'bp-site-comments', 'data-bp-sc': '', 'data-lenis-prevent': '' });
   const shadow = host.attachShadow({ mode: 'open' });
   shadow.innerHTML = `<link rel="stylesheet" href="${esc(cfg.css)}">`;
   // The few rules that must reach the page itself: comment cursor and the admin bar item.
