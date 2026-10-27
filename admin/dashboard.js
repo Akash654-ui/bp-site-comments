@@ -236,18 +236,22 @@
   const renderBar = () => {
     const bar = $('[data-bar]');
     const sel = [...state.selected].filter(find);
+    const visible = filtered().length;
+    // One checkbox selects every comment in the current view; it shows a dash while only some are.
+    const selectAll = `<label class="bpsc-selall" title="${sel.length ? 'Select none' : 'Select all'} (Ctrl+A)"><input type="checkbox" data-select-all${sel.length && sel.length >= visible ? ' checked' : ''} aria-label="Select all ${visible} comments"></label>`;
     if (sel.length) {
-      const visible = filtered().length;
       bar.innerHTML = `
         <div class="bpsc-bulk">
-          <button type="button" class="bpsc-x" data-bulk="clear" aria-label="Clear selection">${icon.close}</button>
+          ${selectAll}
           <b>${sel.length} selected</b>
           ${sel.length < visible ? `<button type="button" class="bpsc-link" data-bulk="all">Select all ${visible}</button>` : ''}
           <span class="bpsc-sep"></span>
           <button type="button" class="bpsc-btn bpsc-btn--ok bpsc-btn--sm" data-bulk="resolved">${icon.check}Resolve</button>
           <button type="button" class="bpsc-btn bpsc-btn--sm" data-bulk="open">${icon.undo}Reopen</button>
           <button type="button" class="bpsc-btn bpsc-btn--sm bpsc-btn--danger" data-bulk="trash" aria-label="Move to Trash">${icon.trash}</button>
+          <button type="button" class="bpsc-x" data-bulk="clear" title="Clear selection (Esc)" aria-label="Clear selection">${icon.close}</button>
         </div>`;
+      bar.querySelector('[data-select-all]').indeterminate = sel.length < visible;
       return;
     }
     const people = [...new Set(state.comments.map((c) => c.author))].sort();
@@ -256,6 +260,7 @@
     const pageLabel = state.page ? pageName(state.comments.find((c) => c.page_key === state.page) || { page_key: state.page }) : '';
     bar.innerHTML = `
       <div class="bpsc-title-row">
+        ${visible ? selectAll : ''}
         <h3>${view}${pageLabel ? `<span> · ${esc(pageLabel)}</span>` : ''}</h3>
         <span class="bpsc-count">${plural(filtered().length, 'comment', 'comments')}</span>
       </div>
@@ -343,7 +348,7 @@
           <dl class="bpsc-keys">
             <dt><kbd>↑</kbd><kbd>↓</kbd></dt><dd>Move</dd><dt><kbd>Enter</kbd></dt><dd>Open</dd>
             <dt><kbd>E</kbd></dt><dd>Resolve</dd><dt><kbd>R</kbd></dt><dd>Reply</dd>
-            <dt><kbd>X</kbd></dt><dd>Select</dd><dt><kbd>/</kbd></dt><dd>Search</dd>
+            <dt><kbd>X</kbd></dt><dd>Select</dd><dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>Select all</dd><dt><kbd>/</kbd></dt><dd>Search</dd>
           </dl>
         </div>` : '';
       return;
@@ -531,7 +536,10 @@
 
   app.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.matches('[data-select]')) toggleSelect(Number(t.closest('.bpsc-row').dataset.id), t.checked);
+    if (t.matches('[data-select-all]')) {
+      if (t.checked) filtered().forEach((c) => state.selected.add(c.id)); else state.selected.clear();
+      renderBar(); renderList();
+    } else if (t.matches('[data-select]')) toggleSelect(Number(t.closest('.bpsc-row').dataset.id), t.checked);
     else if (t.matches('[data-person]')) setFilter({ person: t.value });
     else if (t.matches('[data-sort]')) setFilter({ sort: t.value });
   });
@@ -569,6 +577,15 @@
       if (state.active) { close(); return; }
       if (state.selected.size) { state.selected.clear(); render(); }
       return;
+    }
+    if (!inField && (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'a' || e.key === 'A') && !state.loading) {
+      const items = filtered();
+      if (items.length && !e.target.closest('.bpsc-pane')) {
+        e.preventDefault();
+        items.forEach((c) => state.selected.add(c.id));
+        renderBar(); renderList(); keepFocus();
+        return;
+      }
     }
     if (inField || e.ctrlKey || e.metaKey || e.altKey) return;
     const items = filtered();
