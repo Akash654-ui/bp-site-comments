@@ -9,7 +9,7 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 - **Comment on anything.** Hover outlines the element under the pointer and labels it (Heading, Image, Paragraph, Button, Section…). Press <kbd>↑</kbd> to select the surrounding box or section, <kbd>↓</kbd> to go back.
 - **Pinned threads.** Each comment becomes a numbered pin on the element. Open it to reply, resolve, reopen or delete.
 - **Page list.** *All comments* shows every comment on the current page, split into Open and Resolved; click one to jump to it.
-- **Dashboard.** *Site Comments* in wp-admin is a compact review inbox: one line per comment, grouped by page, with the full thread in a side panel. Resolve, reply and trash from the row or the keyboard (↑/↓, Enter, E, R, X, /), bulk actions, Undo, search and filters. *Review the site* opens the site with Comment mode on.
+- **Dashboard.** *Site Comments* in wp-admin is a three-pane review screen: views and pages on the left (with counts and progress), the comment list in the middle, and the selected conversation on the right. Resolve, reply and trash with a click or the keyboard (↑/↓, Enter, E, R, X, /), bulk actions, Undo, search and filters. *Review the site* opens the site with Comment mode on.
 - **Private.** Only logged-in users can see or use it. Visitors load nothing: no script, no styles, no requests.
 - **Works with any theme.** The interface runs inside its own Shadow DOM, so theme CSS cannot restyle or hide it and none of its styles leak into the site. Colours are built to stay readable on any background (light, dark, brand red or photos).
 - **Safe clicks.** While Comment mode is on, links and buttons don't fire, so nobody navigates away by accident.

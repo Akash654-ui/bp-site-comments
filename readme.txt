@@ -45,16 +45,16 @@ They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to kee
 == Changelog ==
 
 = 1.3.0 =
-* New Site Comments dashboard in wp-admin, replacing the plain post list. A compact review inbox:
-  * A table with Comment, Page, By and When columns. Each comment shows its text and, underneath, what it was left on and its replies. Grouped by page or as one list.
-  * Click a comment to open it in a side panel with its thread, reply box and actions, without leaving the list.
-  * Resolve, view and trash right on the row; bulk select with Resolve, Reopen and Trash; Undo for every change.
+* New Site Comments dashboard in wp-admin, replacing the plain post list:
+  * Three panes: views and pages (with counts and a progress ring), the comment list, and the selected conversation.
+  * Each comment shows who left it, the page, what it is on and its replies; click it to read and reply.
+  * Resolve and Trash on every row, bulk select, and Undo for every change.
   * Keyboard: Up/Down or J/K to move, Enter to open, E to resolve, R to reply, X to select, / to search, Esc to close.
-  * Search, page, person and sort filters, kept in the address bar.
-  * Built from WordPress's own buttons, tabs and colours; works on phones and tablets.
+  * Search, person and sort filters, kept in the address bar.
+  * Illustrated empty states: getting started, pick a comment, all caught up, page done, no matches.
+  * Works on phones and tablets.
 * "Review the site" and "Open page" open the site with Comment mode already on.
-* FAQ questions are labelled "Question".
-* Avatars show initials when there is no profile photo.
+* FAQ questions are labelled "Question"; avatars show initials when there is no profile photo.
 
 = 1.2.0 =
 * Fix: on phones and tablets the page could not be scrolled, and tapping did not open a comment box, while Comment mode was on.
