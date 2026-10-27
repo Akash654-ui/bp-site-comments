@@ -46,7 +46,7 @@ They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to kee
 
 = 1.3.0 =
 * New Site Comments dashboard in wp-admin, replacing the plain post list. A compact review inbox:
-  * One line per comment (pin number, comment, what it is on, replies, person, age), grouped by page or as one list.
+  * A table with Comment, Page, By and When columns. Each comment shows its text and, underneath, what it was left on and its replies. Grouped by page or as one list.
   * Click a comment to open it in a side panel with its thread, reply box and actions, without leaving the list.
   * Resolve, view and trash right on the row; bulk select with Resolve, Reopen and Trash; Undo for every change.
   * Keyboard: Up/Down or J/K to move, Enter to open, E to resolve, R to reply, X to select, / to search, Esc to close.

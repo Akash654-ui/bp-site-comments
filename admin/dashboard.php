@@ -101,6 +101,7 @@ add_action(
 				'api'      => esc_url_raw( rest_url( 'bp-site-comments/v1/comments' ) ),
 				'nonce'    => wp_create_nonce( 'wp_rest' ),
 				'home'     => home_url( '/' ),
+				'site'     => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
 				'trashUrl' => admin_url( 'edit.php?post_status=trash&post_type=' . BP_SC_TYPE ),
 				'trash'    => (int) ( $trash->trash ?? 0 ),
 				'manage'   => bp_sc_can_manage(),

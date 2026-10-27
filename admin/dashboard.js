@@ -55,8 +55,14 @@
     if (/^h[1-6]$/.test(t)) return 'Heading';
     return ({ img: 'Image', picture: 'Image', figure: 'Image', video: 'Video', iframe: 'Embed', p: 'Paragraph', a: 'Link', button: 'Button', li: 'List item', ul: 'List', ol: 'List', section: 'Section', summary: 'Question', details: 'Question', table: 'Table', td: 'Cell', th: 'Cell', blockquote: 'Quote', figcaption: 'Caption', header: 'Header', footer: 'Footer', nav: 'Menu', form: 'Form', input: 'Field', textarea: 'Field', select: 'Field', label: 'Field', svg: 'Icon', span: 'Text', b: 'Text', strong: 'Text', em: 'Text' })[t] || 'Box';
   };
-  // "About us | Zyraa Kitchens" -> "About us"; the site name repeats on every page.
-  const pageName = (c) => String(c.page_title || '').split(/\s[|–—-]\s/)[0].trim() || c.page_key || '/';
+  // "About us | Zyraa Kitchens" -> "About us": the site name repeats on every page, wherever it sits
+  // in the title. The front page is just "Home".
+  const siteName = String(cfg.site || '').trim().toLowerCase();
+  const pageName = (c) => {
+    if (c.page_key === '/') return 'Home';
+    const parts = String(c.page_title || '').split(/\s[|–—-]\s/).map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== siteName);
+    return parts[0] || c.page_key || '/';
+  };
 
   const svg = (d, w = 16) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   const icon = {
@@ -131,10 +137,11 @@
       <h2 class="bpsc-title">Site Comments</h2>
       <a class="page-title-action" href="${esc(withParam(cfg.home, 'bp-comments', '1'))}" target="_blank" rel="noopener">Review the site</a>
       <p class="bpsc-summary" data-summary></p>
+      <a class="bpsc-trash" href="${esc(cfg.trashUrl)}" data-trash>${icon.trash}<span>Trash</span></a>
     </div>
     <div class="bpsc-bar" data-bar></div>
     <div class="bpsc-body" data-body>
-      <div class="bpsc-list" data-list role="list" aria-live="polite"></div>
+      <div class="bpsc-list" data-list role="table" aria-label="Comments" aria-live="polite"></div>
       <aside class="bpsc-detail" data-detail aria-label="Comment" hidden></aside>
     </div>
     <p class="bpsc-keys" data-keys><kbd>↑</kbd><kbd>↓</kbd> move <kbd>Enter</kbd> open <kbd>E</kbd> resolve <kbd>R</kbd> reply <kbd>X</kbd> select <kbd>/</kbd> search <kbd>Esc</kbd> close</p>
@@ -173,51 +180,57 @@
     if (sel.length) {
       const visible = filtered().length;
       bar.innerHTML = `
-        <div class="bpsc-bulk">
-          <label class="bpsc-check"><input type="checkbox" data-select-all checked><span class="screen-reader-text">Clear selection</span></label>
+        <div class="bpsc-toolbar bpsc-toolbar--bulk">
           <b>${sel.length} selected</b>
           ${sel.length < visible ? `<button type="button" class="button-link" data-bulk="all">Select all ${visible}</button>` : ''}
           <span class="bpsc-sep"></span>
-          <button type="button" class="button" data-bulk="resolved">${icon.check}Resolve</button>
-          <button type="button" class="button" data-bulk="open">${icon.undo}Reopen</button>
-          <button type="button" class="button bpsc-danger" data-bulk="trash">${icon.trash}Trash</button>
+          <div class="bpsc-group-btns">
+            <button type="button" class="button" data-bulk="resolved">${icon.check}Resolve</button>
+            <button type="button" class="button" data-bulk="open">${icon.undo}Reopen</button>
+            <button type="button" class="button bpsc-danger" data-bulk="trash">${icon.trash}Trash</button>
+          </div>
           <button type="button" class="button-link" data-bulk="clear">Cancel</button>
         </div>`;
       return;
     }
-    const count = (s) => (s === 'all' ? all.length : all.filter((c) => c.status === s).length);
-    const pages = [...new Map(all.map((c) => [c.page_key, pageName(c)])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    const count = (st) => (st === 'all' ? all.length : all.filter((c) => c.status === st).length);
+    const pages = [...new Map(all.map((c) => [c.page_key, pageName(c)])).entries()].sort((x, y) => x[1].localeCompare(y[1]));
     const people = [...new Set(all.map((c) => c.author))].sort();
     const typing = document.activeElement?.matches?.('[data-q]');
     bar.innerHTML = `
-      <label class="bpsc-check"><input type="checkbox" data-select-all${filtered().length ? '' : ' disabled'}><span class="screen-reader-text">Select all</span></label>
-      <ul class="subsubsub bpsc-tabs">
-        ${[['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([k, label], i) => `<li><a href="#" data-status="${k}"${state.status === k ? ' class="current" aria-current="page"' : ''}>${label} <span class="count">(${count(k)})</span></a>${i < 2 ? ' |' : ''}</li>`).join('')}
-      </ul>
-      <span class="bpsc-sep"></span>
-      <label class="bpsc-search">${icon.search}<span class="screen-reader-text">Search comments</span><input type="search" data-q placeholder="Search" value="${esc(state.q)}"></label>
-      <select data-page aria-label="Page"><option value="">All pages</option>${pages.map(([k, n]) => `<option value="${esc(k)}"${state.page === k ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
-      <select data-person aria-label="Person"><option value="">Everyone</option>${people.map((p) => `<option${state.person === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>
-      <select data-sort aria-label="Sort"><option value="new"${state.sort === 'new' ? ' selected' : ''}>Newest</option><option value="old"${state.sort === 'old' ? ' selected' : ''}>Oldest</option></select>
-      <label class="bpsc-toggle"><input type="checkbox" data-group${state.group ? ' checked' : ''}>By page</label>
-      <a class="bpsc-trash" href="${esc(cfg.trashUrl)}">Trash${state.trash ? ` (${state.trash})` : ''}</a>`;
+      <div class="bpsc-toolbar">
+        <div class="bpsc-tabs" role="tablist" aria-label="Status">
+          ${[['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([k, label]) => `<button type="button" role="tab" data-status="${k}" aria-selected="${state.status === k}">${label}<span>${count(k)}</span></button>`).join('')}
+        </div>
+        <div class="bpsc-tools">
+          <label class="bpsc-search">${icon.search}<span class="screen-reader-text">Search comments</span><input type="search" data-q placeholder="Search comments" value="${esc(state.q)}"></label>
+          <select data-page aria-label="Page"><option value="">All pages</option>${pages.map(([k, n]) => `<option value="${esc(k)}"${state.page === k ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+          <select data-person aria-label="Person"><option value="">Everyone</option>${people.map((pp) => `<option${state.person === pp ? ' selected' : ''}>${esc(pp)}</option>`).join('')}</select>
+          <select data-sort aria-label="Sort"><option value="new"${state.sort === 'new' ? ' selected' : ''}>Newest first</option><option value="old"${state.sort === 'old' ? ' selected' : ''}>Oldest first</option></select>
+          <select data-group aria-label="Grouping"><option value="page"${state.group ? ' selected' : ''}>Group by page</option><option value="none"${state.group ? '' : ' selected'}>No grouping</option></select>
+        </div>
+      </div>`;
     if (typing) { const q = bar.querySelector('[data-q]'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   };
+
+  const avatar = (name, url) => `<span class="bpsc-av" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" width="24" height="24" loading="lazy">` : ''}</span>`;
 
   const row = (c) => {
     const done = c.status === 'resolved';
     const sel = state.selected.has(c.id);
     const n = numberOf(c);
+    const on = `<em>${kind(c.tag)}</em>${c.snippet ? `<span>${esc(c.snippet)}</span>` : ''}`;
     return `
-      <div class="bpsc-row${done ? ' is-done' : ''}${sel ? ' is-selected' : ''}${state.active === c.id ? ' is-active' : ''}" role="listitem" data-id="${c.id}" tabindex="${state.focus === c.id ? 0 : -1}">
-        <label class="bpsc-check" data-stop><input type="checkbox" data-select${sel ? ' checked' : ''}><span class="screen-reader-text">Select comment ${n}</span></label>
-        <span class="bpsc-pin" title="${done ? 'Resolved' : 'Open'} · pin ${n} on the page">${n}</span>
-        <span class="bpsc-row__text">${esc(c.text)}</span>
-        <span class="bpsc-row__on" title="${esc(kind(c.tag))}${c.snippet ? `: ${esc(c.snippet)}` : ''}"><em>${kind(c.tag)}</em>${c.snippet ? ` ${esc(c.snippet)}` : ''}</span>
-        <span class="bpsc-row__replies">${c.replies.length ? `${icon.reply}${c.replies.length}` : ''}</span>
-        ${state.group ? '' : `<span class="bpsc-row__page" title="${esc(c.page_key)}">${esc(pageName(c))}</span>`}
-        <span class="bpsc-row__who" title="${esc(c.author)}">${esc(initials(c.author))}</span>
-        <time class="bpsc-row__age" datetime="${esc(c.date)}" title="${esc(fullDate(c.date))}">${age(c.date)}</time>
+      <div class="bpsc-row${done ? ' is-done' : ''}${sel ? ' is-selected' : ''}${state.active === c.id ? ' is-active' : ''}" role="row" data-id="${c.id}" tabindex="${state.focus === c.id ? 0 : -1}" aria-selected="${state.active === c.id}">
+        <span class="bpsc-c-check" role="cell" data-stop><input type="checkbox" data-select${sel ? ' checked' : ''} aria-label="Select comment ${n}"></span>
+        <span class="bpsc-c-pin" role="cell"><span class="bpsc-pin" title="${done ? 'Resolved' : 'Open'}: pin ${n} on the page">${n}</span></span>
+        <span class="bpsc-c-main" role="cell">
+          <span class="bpsc-row__text">${esc(c.text)}</span>
+          <span class="bpsc-row__on">${on}${c.replies.length ? `<span class="bpsc-row__replies">${icon.reply}${plural(c.replies.length, 'reply', 'replies')}</span>` : ''}</span>
+        </span>
+        ${state.group ? '' : `<span class="bpsc-c-page" role="cell" title="${esc(c.page_key)}">${esc(pageName(c))}</span>`}
+        <span class="bpsc-c-by" role="cell">${avatar(c.author, c.avatar)}<span>${esc(c.author)}</span></span>
+        <span class="bpsc-c-when" role="cell"><time datetime="${esc(c.date)}" title="${esc(fullDate(c.date))}">${age(c.date)}</time></span>
         <span class="bpsc-row__acts" data-stop>
           ${c.can_edit ? `<button type="button" data-act="status" title="${done ? 'Reopen (E)' : 'Resolve (E)'}" aria-label="${done ? 'Reopen' : 'Resolve'} comment ${n}">${done ? icon.undo : icon.check}</button>` : ''}
           <a href="${esc(withParam(c.page_url, 'bp-comment', c.id))}" target="_blank" rel="noopener" title="View on page" aria-label="View comment ${n} on the page">${icon.ext}</a>
@@ -261,11 +274,21 @@
       if (state.group && c.page_key !== lastPage) {
         lastPage = c.page_key;
         const here = items.filter((x) => x.page_key === c.page_key).length;
-        html += `<div class="bpsc-group" role="presentation"><b>${esc(pageName(c))}</b><code>${esc(c.page_key)}</code><span class="bpsc-group__n">${here}</span><a href="${esc(withParam(c.page_url, 'bp-comments', '1'))}" target="_blank" rel="noopener">Open page ${icon.ext}</a></div>`;
+        html += `<div class="bpsc-group" role="row"><span class="bpsc-group__title" role="cell"><b>${esc(pageName(c))}</b><code>${esc(c.page_key)}</code><span class="bpsc-group__n">${plural(here, 'comment', 'comments')}</span></span><a href="${esc(withParam(c.page_url, 'bp-comments', '1'))}" target="_blank" rel="noopener">Open page ${icon.ext}</a></div>`;
       }
       html += row(c);
     });
-    list.innerHTML = html;
+    const allSel = items.every((c) => state.selected.has(c.id));
+    const head = `
+      <div class="bpsc-head" role="row">
+        <span class="bpsc-c-check" role="columnheader"><input type="checkbox" data-select-all${allSel ? ' checked' : ''} aria-label="Select all ${items.length}"></span>
+        <span class="bpsc-c-pin" role="columnheader"><span class="screen-reader-text">Pin</span></span>
+        <span class="bpsc-c-main" role="columnheader">Comment</span>
+        ${state.group ? '' : '<span class="bpsc-c-page" role="columnheader">Page</span>'}
+        <span class="bpsc-c-by" role="columnheader">By</span>
+        <span class="bpsc-c-when" role="columnheader">When</span>
+      </div>`;
+    list.innerHTML = head + html;
     if (hadFocus) list.querySelector(`.bpsc-row[data-id="${state.focus}"]`)?.focus({ preventScroll: true });
   };
 
@@ -276,7 +299,7 @@
     $('[data-body]').classList.toggle('has-detail', !!c);
     if (!c) return;
     const done = c.status === 'resolved';
-    const msg = (r) => `<li><span class="bpsc-av" aria-hidden="true">${esc(initials(r.author))}${r.avatar ? `<img src="${esc(r.avatar)}" alt="" width="24" height="24">` : ''}</span><div><p class="bpsc-detail__by"><b>${esc(r.author)}</b> <time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time></p><p class="bpsc-detail__text">${esc(r.text)}</p></div></li>`;
+    const msg = (r) => `<li>${avatar(r.author, r.avatar)}<div><p class="bpsc-detail__by"><b>${esc(r.author)}</b> <time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time></p><p class="bpsc-detail__text">${esc(r.text)}</p></div></li>`;
     pane.innerHTML = `
       <header class="bpsc-detail__head">
         <span class="bpsc-pin">${numberOf(c)}</span>
@@ -284,23 +307,26 @@
           <a class="bpsc-detail__page" href="${esc(c.page_url)}" target="_blank" rel="noopener">${esc(pageName(c))}</a>
           <span class="bpsc-detail__on"><em>${kind(c.tag)}</em>${c.snippet ? ` ${esc(c.snippet)}` : ''}</span>
         </div>
+        <span class="bpsc-state${done ? ' is-done' : ''}">${done ? 'Resolved' : 'Open'}</span>
         <button type="button" class="bpsc-x" data-act="close" aria-label="Close (Esc)">${icon.close}</button>
       </header>
-      <div class="bpsc-detail__actions">
-        ${c.can_edit ? `<button type="button" class="button ${done ? '' : 'button-primary'}" data-act="status">${done ? 'Reopen' : 'Resolve'}</button>` : ''}
-        <a class="button" href="${esc(withParam(c.page_url, 'bp-comment', c.id))}" target="_blank" rel="noopener">View on page</a>
-        <span class="bpsc-sep"></span>
-        <span class="bpsc-state${done ? ' is-done' : ''}">${done ? 'Resolved' : 'Open'}</span>
-      </div>
       <ol class="bpsc-detail__thread">${msg(c)}${c.replies.map(msg).join('')}</ol>
       <div class="bpsc-detail__reply">
-        <textarea rows="3" data-reply-text placeholder="Reply…" aria-label="Reply to ${esc(c.author)}"></textarea>
-        <div><span>Ctrl + Enter to send</span><button type="button" class="button button-primary" data-act="reply" disabled>Reply</button></div>
+        <textarea rows="2" data-reply-text placeholder="Write a reply…" aria-label="Reply to ${esc(c.author)}"></textarea>
+        <div><span><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span><button type="button" class="button" data-act="reply" disabled>Reply</button></div>
       </div>
-      ${c.can_edit ? '<p class="bpsc-detail__foot"><button type="button" class="button-link bpsc-danger" data-act="trash">Move to Trash</button></p>' : ''}`;
+      <footer class="bpsc-detail__actions">
+        ${c.can_edit ? `<button type="button" class="button ${done ? '' : 'button-primary'}" data-act="status">${done ? `${icon.undo}Reopen` : `${icon.check}Resolve`}</button>` : ''}
+        <a class="button" href="${esc(withParam(c.page_url, 'bp-comment', c.id))}" target="_blank" rel="noopener">${icon.ext}View on page</a>
+        <span class="bpsc-sep"></span>
+        ${c.can_edit ? `<button type="button" class="bpsc-iconbtn bpsc-danger" data-act="trash" title="Move to Trash" aria-label="Move to Trash">${icon.trash}</button>` : ''}
+      </footer>`;
   };
 
+  const renderTrash = () => { $('[data-trash] span').textContent = state.trash ? `Trash (${state.trash})` : 'Trash'; };
+
   const render = () => {
+    renderTrash();
     renderBadge(); renderSummary(); renderBar(); renderList(); renderDetail();
     $('[data-keys]').hidden = !state.comments.length;
   };
@@ -374,7 +400,7 @@
     try {
       await Promise.all(targets.map((c) => api(`/${c.id}`, { method: 'DELETE' })));
       state.trash += targets.length;
-      renderBar();
+      renderTrash();
       toast(targets.length === 1 ? 'Moved to Trash' : `${targets.length} comments moved to Trash`, {
         undo: async () => {
           try {
@@ -446,7 +472,7 @@
     else if (t.matches('[data-page]')) setFilter({ page: t.value });
     else if (t.matches('[data-person]')) setFilter({ person: t.value });
     else if (t.matches('[data-sort]')) setFilter({ sort: t.value });
-    else if (t.matches('[data-group]')) setFilter({ group: t.checked });
+    else if (t.matches('[data-group]')) setFilter({ group: t.value === 'page' });
   });
 
   // Whichever row gets focus (click, Tab, screen reader) is where the keyboard continues from.
