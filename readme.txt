@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.1.3
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,20 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.2.0 =
+* Fix: on phones and tablets the page could not be scrolled, and tapping did not open a comment box, while Comment mode was on.
+* Fix: text that looked like HTML (for example "change <h2> to <h3>") was removed from comments. Comments are now kept exactly as typed.
+* Fix: pins drifted away from animated or moving content. They now follow their element.
+* Fix: Bulk edit in the dashboard could turn comments into drafts and hide them.
+* New: edit your own comments.
+* New: "Bigger area" and "Smaller area" buttons in the comment box, for touch screens without arrow keys.
+* New comments from other people appear when you start commenting, open the list or come back to the tab.
+* The comment box no longer covers the admin bar, and the toolbar moves aside when the list is open.
+* Clearer messages when your login session has expired.
+* The View on page link no longer leaves ?bp-comment in the address bar.
+* "Show resolved" label, hover label clear of pins, no meaningless "Published" filter.
+* Avatar fallback works on sites with a strict Content Security Policy.
 
 = 1.1.3 =
 * The comment list and long threads now scroll with the mouse wheel on sites that use smooth scrolling (Lenis, MouseWheel Smooth Scroll).

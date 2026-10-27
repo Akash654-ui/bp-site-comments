@@ -54,7 +54,11 @@
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Something went wrong. Please try again.');
+    if (!res.ok) {
+      if (data.code === 'rest_cookie_invalid_nonce') throw new Error('Your session has expired. Reload the page and try again.');
+      if (res.status === 401) throw new Error('You have been logged out. Log in again to comment.');
+      throw new Error(data.message || 'Something went wrong. Please try again.');
+    }
     return data;
   };
 
@@ -78,6 +82,8 @@
   if (doc.getElementById('wpadminbar')) host.classList.add('has-adminbar');
 
   const $ = (sel) => shadow.querySelector(sel);
+  // A missing avatar falls back to the initials underneath (no inline handler, so a strict CSP is fine).
+  shadow.addEventListener('error', (e) => { if (e.target.tagName === 'IMG') e.target.remove(); }, true);
   const fromUs = (e) => e.composedPath?.().includes(host) || e.target?.closest?.('#wpadminbar');
 
   /* What people call each kind of element, shown on the highlight. */
@@ -161,7 +167,7 @@
       <span class="bar__mode"><span class="bar__live" aria-hidden="true"></span>Comment mode</span>
       <span class="bar__hint">${icon.cursor}Click anything to leave a comment</span>
       <span class="bar__sep" aria-hidden="true"></span>
-      <button type="button" class="bar__chip" data-resolved aria-pressed="false">${icon.check}Resolved</button>
+      <button type="button" class="bar__chip" data-resolved aria-pressed="false" title="Show resolved comments on the page">${icon.check}Show resolved</button>
       <button type="button" class="bar__chip" data-panel aria-expanded="false">${icon.list}All comments<span class="bar__count" data-bar-count></span></button>
       <button type="button" class="bar__done" data-exit>Done</button>
     </div>
@@ -206,16 +212,27 @@
   };
 
   const load = async () => {
-    try { comments = await api(`?url=${encodeURIComponent(pageUrl())}`); } catch (e) { comments = []; }
+    lastLoad = Date.now();
+    try { comments = await api(`?url=${encodeURIComponent(pageUrl())}`); } catch (e) { /* keep what is shown */ }
+    elCache.clear();
     updateCounts(); renderPins(); renderPanel();
   };
 
   /* ---------------- mode ---------------- */
   const setPanel = (open) => {
     panel.hidden = !open;
+    host.classList.toggle('panel-open', open);
     $('[data-panel]').setAttribute('aria-expanded', String(open));
-    if (open) renderPanel();
+    if (open) { renderPanel(); refresh(); }
   };
+  // Other people comment too: fetch again when commenting starts, the list opens or the tab is back in view.
+  let lastLoad = 0;
+  const refresh = () => {
+    if (Date.now() - lastLoad < 4000 || openPopover) return;
+    load();
+  };
+  addEventListener('focus', () => { if (on) refresh(); });
+  doc.addEventListener('visibilitychange', () => { if (on && doc.visibilityState === 'visible') refresh(); });
   const setMode = (value) => {
     on = value;
     root.classList.toggle(`${UI}-on`, on);
@@ -223,7 +240,9 @@
     launcher.hidden = on;   // The toolbar takes over while commenting.
     bar.hidden = !on;
     if (!on) { hideHl(); closePopover(); setPanel(false); }
+    else refresh();
     renderPins();
+    trackPins();
   };
 
   launcher.addEventListener('click', () => setMode(true));
@@ -257,7 +276,7 @@
   const hideHl = () => { hoverEl = lockedEl = null; pickStack = []; hl.classList.remove('is-on'); };
 
   doc.addEventListener('pointermove', (e) => {
-    if (!on || openPopover) return;
+    if (!on || openPopover || e.pointerType === 'touch') return;
     const el = fromUs(e) ? null : pick(e.target);
     if (el !== hoverEl) { hoverEl = el; lockedEl = null; pickStack = []; }
     drawHl();
@@ -268,18 +287,22 @@
   addEventListener('resize', reflow);
 
   // In comment mode a click comments instead of following links or pressing buttons.
+  // Touch is left alone (blocking touchstart would stop scrolling and taps on phones); the click
+  // that follows a tap is caught below like any other.
   const swallow = (e) => {
-    if (!on || fromUs(e)) return;
+    if (!on || fromUs(e) || e.pointerType === 'touch') return;
     e.preventDefault();
     e.stopPropagation();
   };
-  ['pointerdown', 'mousedown', 'mouseup', 'touchstart', 'submit'].forEach((t) => doc.addEventListener(t, swallow, { capture: true, passive: false }));
+  ['pointerdown', 'mousedown', 'mouseup', 'submit'].forEach((t) => doc.addEventListener(t, swallow, { capture: true, passive: false }));
   doc.addEventListener('click', (e) => {
     if (!on || fromUs(e)) return;
     e.preventDefault();
     e.stopPropagation();
     if (openPopover) { closePopover(); return; }
-    const el = target() || pick(e.target);
+    // The element under the click (a tap has no hover), or the wider box picked with the Up key around it.
+    const base = pick(e.target);
+    const el = lockedEl && lockedEl.contains(e.target) ? lockedEl : base;
     if (el) compose(el);
   }, true);
 
@@ -319,17 +342,18 @@
     const r = visibleRect(el);
     if (!r) { pop.classList.add('is-floating'); return; }
     const pw = pop.offsetWidth, ph = pop.offsetHeight, gap = 14;
+    const minTop = Math.max(0, doc.getElementById('wpadminbar')?.getBoundingClientRect().bottom || 0) + 12; // Keep the admin bar visible.
     let left = Math.min(Math.max(12, r.left), innerWidth - pw - 12);
     let top = r.bottom + gap;
     if (top + ph > innerHeight - 12) top = r.top - ph - gap;          // Above when there is no room below.
-    if (top < 12) {
+    if (top < minTop) {
       // Tall targets: beside them, so the thing being discussed stays visible.
-      top = Math.min(Math.max(12, r.top), innerHeight - ph - 12);
+      top = Math.min(Math.max(minTop, r.top), innerHeight - ph - 12);
       if (r.right + gap + pw < innerWidth - 12) left = r.right + gap;
       else if (r.left - gap - pw > 12) left = r.left - gap - pw;
     }
     pop.classList.remove('is-floating');
-    Object.assign(pop.style, { left: `${Math.round(left)}px`, top: `${Math.round(Math.max(12, top))}px` });
+    Object.assign(pop.style, { left: `${Math.round(left)}px`, top: `${Math.round(Math.max(minTop, top))}px` });
   };
 
   const popover = (el, html, cls = '') => {
@@ -343,17 +367,19 @@
   };
 
   const targetHead = (k, snippet) => `<div class="pop__target"><span class="chip">${esc(k)}</span>${snippet ? `<span class="pop__snippet">${esc(snippet.slice(0, 90))}${snippet.length > 90 ? '…' : ''}</span>` : ''}</div>`;
-  const avatar = (name, url) => `<span class="avatar" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" width="28" height="28" loading="lazy" onerror="this.remove()">` : ''}</span>`;
+  const avatar = (name, url) => `<span class="avatar" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" width="28" height="28" loading="lazy">` : ''}</span>`;
   const submitOnCtrlEnter = (ta, btn) => {
     ta.addEventListener('input', () => { btn.disabled = !ta.value.trim(); });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); btn.click(); } });
     setTimeout(() => ta.focus({ preventScroll: true }), 30);
   };
 
-  const compose = (el) => {
+  const compose = (el, inner = []) => {
     const snippet = snippetFor(el);
+    const wider = el.parentElement && el.parentElement !== doc.body && el.parentElement !== root;
     const pop = popover(el, `
       ${targetHead(kind(el), snippet)}
+      ${wider || inner.length ? `<div class="pop__scope">${inner.length ? '<button type="button" class="scope-btn" data-narrow>&minus; Smaller area</button>' : ''}${wider ? '<button type="button" class="scope-btn" data-wider>+ Bigger area</button>' : ''}</div>` : ''}
       <textarea class="input" rows="3" aria-label="Your comment" placeholder="What should change here?"></textarea>
       <div class="pop__foot">
         <span class="hint"><kbd>Ctrl</kbd><kbd>Enter</kbd> to post</span>
@@ -366,6 +392,16 @@
     const save = pop.querySelector('[data-save]');
     submitOnCtrlEnter(ta, save);
     pop.querySelector('[data-cancel]').addEventListener('click', closePopover);
+    // Switching area keeps what was already typed.
+    const rescope = (next, stack) => {
+      const text = ta.value;
+      compose(next, stack);
+      const fresh = openPopover.el.querySelector('textarea');
+      fresh.value = text;
+      fresh.dispatchEvent(new Event('input'));
+    };
+    pop.querySelector('[data-wider]')?.addEventListener('click', () => rescope(el.parentElement, [...inner, el]));
+    pop.querySelector('[data-narrow]')?.addEventListener('click', () => rescope(inner[inner.length - 1], inner.slice(0, -1)));
     save.addEventListener('click', async () => {
       save.disabled = true; save.textContent = 'Posting…';
       try {
@@ -383,7 +419,7 @@
     const el = findEl(c);
     const n = comments.indexOf(c) + 1;
     const canChange = c.mine || cfg.manage;
-    const msg = (r) => `<li class="msg">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time></p><p class="msg__text">${nl2br(r.text)}</p></div></li>`;
+    const msg = (r, editable = false) => `<li class="msg">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${editable ? '<button type="button" class="link-btn" data-edit>Edit</button>' : ''}</p><p class="msg__text">${nl2br(r.text)}</p></div></li>`;
     const pop = popover(el, `
       <div class="pop__head">
         <span class="num">${c.status === 'resolved' ? icon.check : n}</span>
@@ -391,7 +427,7 @@
         <button type="button" class="icon-btn" data-close aria-label="Close">${icon.close}</button>
       </div>
       ${!el ? '<p class="note">This part of the page has changed since the comment was left.</p>' : ''}
-      <ol class="thread">${msg(c)}${c.replies.map(msg).join('')}</ol>
+      <ol class="thread">${msg(c, c.mine)}${c.replies.map((x) => msg(x)).join('')}</ol>
       <textarea class="input input--reply" rows="2" aria-label="Reply" placeholder="Reply…"></textarea>
       <div class="pop__foot">
         <span class="pop__actions">${canChange ? '<button type="button" class="btn btn--ghost btn--danger" data-delete>Delete</button>' : ''}</span>
@@ -408,6 +444,21 @@
     pop.querySelector('[data-close]').addEventListener('click', closePopover);
 
     const replace = (fresh) => { comments[comments.indexOf(c)] = fresh; updateCounts(); renderPins(); renderPanel(); return fresh; };
+    pop.querySelector('[data-edit]')?.addEventListener('click', (e) => {
+      const body = e.currentTarget.closest('.msg').querySelector('.msg__text');
+      body.outerHTML = '<div class="edit"><textarea class="input input--reply" aria-label="Edit your comment"></textarea><div class="pop__actions"><button type="button" class="btn btn--ghost" data-edit-cancel>Cancel</button><button type="button" class="btn" data-edit-save>Save</button></div></div>';
+      e.currentTarget.remove();
+      const box = pop.querySelector('.edit textarea');
+      box.value = c.text;
+      const saveEdit = pop.querySelector('[data-edit-save]');
+      submitOnCtrlEnter(box, saveEdit);
+      pop.querySelector('[data-edit-cancel]').addEventListener('click', () => thread(c));
+      saveEdit.addEventListener('click', async () => {
+        saveEdit.disabled = true;
+        try { thread(replace(await api(`/${c.id}`, { method: 'PATCH', body: { text: box.value } }))); say('Comment updated'); }
+        catch (err) { say(err.message, true); saveEdit.disabled = false; }
+      });
+    });
     send.addEventListener('click', async () => {
       send.disabled = true;
       try { thread(replace(await api(`/${c.id}/replies`, { method: 'POST', body: { text: ta.value } }))); }
@@ -447,12 +498,33 @@
     placePins();
   };
 
+  // Elements per comment, so following them every frame stays cheap.
+  const elCache = new Map();
+  const elFor = (c) => {
+    let el = elCache.get(c.id);
+    if (!el || !el.isConnected) { el = findEl(c); elCache.set(c.id, el); }
+    return el;
+  };
+  // Content can move without any resize (entrance animations, sliders, sticky bars): keep pins on it.
+  let tracking = false;
+  const trackPins = () => {
+    if (tracking || !on) return;
+    tracking = true;
+    const tick = () => {
+      if (!on) { tracking = false; return; }
+      placePins();
+      if (openPopover) { drawHl(); place(openPopover.el, openPopover.anchor); }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
+
   const placePins = () => {
     if (!on) return;
     const taken = [];
     pins.querySelectorAll('.pin').forEach((pin) => {
       const c = comments.find((x) => String(x.id) === pin.dataset.id);
-      const r = c && visibleRect(findEl(c));
+      const r = c && visibleRect(elFor(c));
       pin.hidden = !r || r.bottom < 0 || r.top > innerHeight;
       if (pin.hidden) return;
       // Top-left corner of the element, where reading starts; nudge pins that would overlap.
@@ -460,7 +532,9 @@
       const y = Math.max(r.top - 13, 6);
       while (taken.some(([tx, ty]) => Math.abs(tx - x) < 26 && Math.abs(ty - y) < 26)) x += 30;
       taken.push([x, y]);
-      pin.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+      // `translate`, not `transform`: the hover `scale` is applied after `transform` and would scale
+      // the position too, making the pin jump away from the pointer.
+      pin.style.translate = `${Math.round(x)}px ${Math.round(y)}px`;
     });
   };
   // Layout shifts (fonts, images, menus) move things; keep pins in place.
@@ -506,6 +580,11 @@
     // Comment mode always starts off; only a click (or a link to a specific comment) turns it on.
     try { sessionStorage.removeItem('bp-sc-on'); } catch (e) { /* storage blocked */ }
     const c = wanted && comments.find((x) => String(x.id) === wanted);
+    if (wanted) {
+      const clean = new URL(location.href);
+      clean.searchParams.delete('bp-comment');
+      history.replaceState(history.state, '', clean);
+    }
     if (c) {
       setMode(true);
       setTimeout(() => focusComment(c), 600);

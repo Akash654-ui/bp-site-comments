@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.1.3
+ * Version:           1.2.0
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,11 +19,35 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.1.3' );
+define( 'BP_SC_VERSION', '1.2.0' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
 
 add_action( 'init', fn() => load_plugin_textdomain( 'bp-site-comments', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' ) );
+
+/**
+ * A comment as plain text, exactly as typed: tags like "<h2>" are kept as text, not stripped.
+ * Invalid UTF-8 and control characters are removed, and it is capped at 5,000 characters.
+ */
+function bp_sc_clean_text( $text ): string {
+	$text = wp_check_invalid_utf8( (string) $text, true );
+	// Control characters only (\p{Cc}): zero-width joiners are kept, Hindi and other scripts need them.
+	$text = preg_replace( '/[^\P{Cc}\n\t]/u', '', str_replace( "\r\n", "\n", $text ) ) ?? '';
+	return trim( bp_sc_cut( $text, 5000 ) );
+}
+
+/** Stored text -> plain text. Comments are saved HTML-encoded (see bp_sc_clean_text). */
+function bp_sc_text( WP_Post $post ): string {
+	return html_entity_decode( $post->post_content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+}
+
+/** Post fields for a comment's text: encoded content, readable title. */
+function bp_sc_text_fields( string $text ): array {
+	return array(
+		'post_content' => htmlspecialchars( $text, ENT_QUOTES | ENT_HTML5, 'UTF-8' ),
+		'post_title'   => wp_trim_words( wp_strip_all_tags( $text ), 10, '…' ),
+	);
+}
 
 /** Cut text to a length, without relying on the mbstring extension (not every host has it). */
 function bp_sc_cut( string $text, int $length ): string {
@@ -104,7 +128,7 @@ function bp_sc_format( WP_Post $post ): array {
 	$replies = json_decode( $meta( 'replies' ) ?: '[]', true );
 	return array(
 		'id'        => $post->ID,
-		'text'      => $post->post_content,
+		'text'      => bp_sc_text( $post ),
 		'author'    => $author ? $author->display_name : __( 'Someone', 'bp-site-comments' ),
 		'avatar'    => get_avatar_url( (int) $post->post_author, array( 'size' => 64 ) ),
 		'mine'      => (int) $post->post_author === get_current_user_id(),
@@ -163,7 +187,7 @@ add_action(
 						'title'    => array( 'type' => 'string', 'default' => '' ),
 					),
 					'callback'            => function ( WP_REST_Request $r ) {
-						$text = trim( sanitize_textarea_field( (string) $r['text'] ) );
+						$text = bp_sc_clean_text( $r['text'] );
 						if ( '' === $text ) {
 							return new WP_Error( 'bp_sc_empty', __( 'Write a comment first.', 'bp-site-comments' ), array( 'status' => 400 ) );
 						}
@@ -173,8 +197,8 @@ add_action(
 								'post_type'    => BP_SC_TYPE,
 								'post_status'  => 'publish',
 								'post_author'  => get_current_user_id(),
-								'post_title'   => wp_trim_words( $text, 10, '…' ),
-								'post_content' => $text,
+								'post_title'   => bp_sc_text_fields( $text )['post_title'],
+								'post_content' => bp_sc_text_fields( $text )['post_content'],
 								'meta_input'   => array(
 									'_bp_sc_page_key'   => bp_sc_page_key( $url ),
 									'_bp_sc_page_url'   => $url,
@@ -224,9 +248,9 @@ add_action(
 							update_post_meta( $post->ID, '_bp_sc_status', 'resolved' === $r['status'] ? 'resolved' : 'open' );
 						}
 						if ( null !== $r['text'] && $mine ) {
-							$text = trim( sanitize_textarea_field( (string) $r['text'] ) );
+							$text = bp_sc_clean_text( $r['text'] );
 							if ( '' !== $text ) {
-								wp_update_post( array( 'ID' => $post->ID, 'post_content' => $text, 'post_title' => wp_trim_words( $text, 10, '…' ) ) );
+								wp_update_post( array( 'ID' => $post->ID ) + bp_sc_text_fields( $text ) );
 							}
 						}
 						return bp_sc_format( get_post( $post->ID ) );
@@ -259,7 +283,7 @@ add_action(
 				'args'                => array( 'text' => array( 'type' => 'string', 'required' => true ) ),
 				'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
 					$post = $get_comment( $r );
-					$text = trim( sanitize_textarea_field( (string) $r['text'] ) );
+					$text = bp_sc_clean_text( $r['text'] );
 					if ( ! $post || '' === $text ) {
 						return new WP_Error( 'bp_sc_bad', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
 					}
@@ -345,7 +369,9 @@ add_action(
 	function ( $col, $id ) {
 		$c = bp_sc_format( get_post( $id ) );
 		if ( 'bp_comment' === $col ) {
-			$text = esc_html( wp_trim_words( $c['text'], 30, '…' ) );
+			// A plain cut, not wp_trim_words(): that strips tags, and "<h2>" in a comment is text.
+			$cut  = bp_sc_cut( $c['text'], 180 );
+			$text = esc_html( $cut . ( $cut !== $c['text'] ? '…' : '' ) );
 			// Trashed comments are not linked to the page: the row offers Restore / Delete Permanently instead.
 			echo 'trash' === get_post_status( $id ) || ! $c['page_url']
 				? '<strong>' . $text . '</strong>' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -369,10 +395,19 @@ add_action(
 	2
 );
 
+add_filter(
+	'bulk_actions-edit-' . BP_SC_TYPE,
+	function ( $actions ) {
+		unset( $actions['edit'] );
+		return $actions;
+	}
+);
+
 // Filter the list by status: Open / Resolved views.
 add_filter(
 	'views_edit-' . BP_SC_TYPE,
 	function ( $views ) {
+		unset( $views['publish'], $views['draft'], $views['pending'], $views['private'] );
 		$base = admin_url( 'edit.php?post_type=' . BP_SC_TYPE );
 		$cur  = sanitize_key( $_GET['bp_status'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
 		foreach ( array( 'open' => __( 'Open', 'bp-site-comments' ), 'resolved' => __( 'Resolved', 'bp-site-comments' ) ) as $k => $label ) {
