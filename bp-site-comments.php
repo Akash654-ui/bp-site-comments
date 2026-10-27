@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.2.0
+ * Version:           1.3.0
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,9 +19,11 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.2.0' );
+define( 'BP_SC_VERSION', '1.3.0' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
+
+require_once __DIR__ . '/admin/dashboard.php';
 
 add_action( 'init', fn() => load_plugin_textdomain( 'bp-site-comments', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' ) );
 
@@ -101,12 +103,11 @@ add_action(
 					'edit_item'     => __( 'Comment', 'bp-site-comments' ),
 					'search_items'  => __( 'Search comments', 'bp-site-comments' ),
 					'not_found'     => __( 'No comments yet. Open any page and turn on Comment mode.', 'bp-site-comments' ),
+					'not_found_in_trash' => __( 'The Trash is empty. Deleted comments stay here until you empty it.', 'bp-site-comments' ),
 				),
 				'public'          => false,
 				'show_ui'         => true,
-				'show_in_menu'    => true,
-				'menu_icon'       => 'dashicons-format-chat',
-				'menu_position'   => 26,
+				'show_in_menu'    => false, // The Site Comments dashboard (admin/dashboard.php) is the menu item.
 				'supports'        => array( 'author' ),
 				'capability_type' => 'post',
 				'capabilities'    => array( 'create_posts' => 'do_not_allow' ),
@@ -130,7 +131,7 @@ function bp_sc_format( WP_Post $post ): array {
 		'id'        => $post->ID,
 		'text'      => bp_sc_text( $post ),
 		'author'    => $author ? $author->display_name : __( 'Someone', 'bp-site-comments' ),
-		'avatar'    => get_avatar_url( (int) $post->post_author, array( 'size' => 64 ) ),
+		'avatar'    => get_avatar_url( (int) $post->post_author, array( 'size' => 64, 'default' => 'blank' ) ),
 		'mine'      => (int) $post->post_author === get_current_user_id(),
 		'date'      => get_post_time( 'c', true, $post ),
 		'selector'  => $meta( 'selector' ),
@@ -139,6 +140,8 @@ function bp_sc_format( WP_Post $post ): array {
 		'status'    => $meta( 'status' ) ?: 'open',
 		'page_url'  => $meta( 'page_url' ),
 		'page_title' => $meta( 'page_title' ),
+		'page_key'  => $meta( 'page_key' ) ?: bp_sc_page_key( $meta( 'page_url' ) ),
+		'can_edit'  => (int) $post->post_author === get_current_user_id() || bp_sc_can_manage(),
 		'replies'   => is_array( $replies ) ? $replies : array(),
 	);
 }
@@ -158,21 +161,22 @@ add_action(
 			array(
 				array(
 					'methods'             => 'GET',
-					'permission_callback' => $auth,
-					'args'                => array( 'url' => array( 'type' => 'string', 'required' => true ) ),
+					// Without a url: every comment on the site, for the dashboard (people who can edit posts).
+					'permission_callback' => fn( WP_REST_Request $r ) => bp_sc_can_comment() && ( '' !== (string) $r['url'] || current_user_can( 'edit_posts' ) ),
+					'args'                => array( 'url' => array( 'type' => 'string', 'default' => '' ) ),
 					'callback'            => function ( WP_REST_Request $r ) {
-						$posts = get_posts(
-							array(
-								'post_type'      => BP_SC_TYPE,
-								'post_status'    => 'publish',
-								'posts_per_page' => 500,
-								'orderby'        => 'date',
-								'order'          => 'ASC',
-								'meta_key'       => '_bp_sc_page_key', // phpcs:ignore WordPress.DB.SlowDBQuery
-								'meta_value'     => bp_sc_page_key( (string) $r['url'] ), // phpcs:ignore WordPress.DB.SlowDBQuery
-							)
+						$query = array(
+							'post_type'      => BP_SC_TYPE,
+							'post_status'    => 'publish',
+							'posts_per_page' => 2000,
+							'orderby'        => 'date',
+							'order'          => 'ASC',
 						);
-						return array_map( 'bp_sc_format', $posts );
+						if ( '' !== (string) $r['url'] ) {
+							$query['meta_key']   = '_bp_sc_page_key'; // phpcs:ignore WordPress.DB.SlowDBQuery
+							$query['meta_value'] = bp_sc_page_key( (string) $r['url'] ); // phpcs:ignore WordPress.DB.SlowDBQuery
+						}
+						return array_map( 'bp_sc_format', get_posts( $query ) );
 					},
 				),
 				array(
@@ -276,6 +280,26 @@ add_action(
 
 		register_rest_route(
 			$ns,
+			'/comments/(?P<id>\d+)/restore',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $auth,
+				'callback'            => function ( WP_REST_Request $r ) {
+					$post = get_post( (int) $r['id'] );
+					if ( ! $post || BP_SC_TYPE !== $post->post_type || 'trash' !== $post->post_status ) {
+						return new WP_Error( 'bp_sc_missing', __( 'Comment not found in the Trash.', 'bp-site-comments' ), array( 'status' => 404 ) );
+					}
+					if ( (int) $post->post_author !== get_current_user_id() && ! bp_sc_can_manage() ) {
+						return new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can restore this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
+					}
+					wp_untrash_post( $post->ID );
+					return bp_sc_format( get_post( $post->ID ) );
+				},
+			)
+		);
+
+		register_rest_route(
+			$ns,
 			'/comments/(?P<id>\d+)/replies',
 			array(
 				'methods'             => 'POST',
@@ -291,7 +315,7 @@ add_action(
 					$replies   = json_decode( (string) get_post_meta( $post->ID, '_bp_sc_replies', true ) ?: '[]', true ) ?: array();
 					$replies[] = array(
 						'author' => $user->display_name,
-						'avatar' => get_avatar_url( $user->ID, array( 'size' => 64 ) ),
+						'avatar' => get_avatar_url( $user->ID, array( 'size' => 64, 'default' => 'blank' ) ),
 						'text'   => $text,
 						'date'   => gmdate( 'c' ),
 					);
@@ -324,7 +348,7 @@ add_action(
 				'nonce'  => wp_create_nonce( 'wp_rest' ),
 				'manage' => bp_sc_can_manage(),
 				'user'   => wp_get_current_user()->display_name,
-				'admin'  => admin_url( 'edit.php?post_type=' . BP_SC_TYPE ),
+				'admin'  => bp_sc_dashboard_url(),
 			)
 		);
 	}
@@ -427,24 +451,6 @@ add_action(
 	}
 );
 
-// Menu badge with the number of open comments.
-add_action(
-	'admin_menu',
-	function () {
-		global $menu;
-		$open = count( get_posts( array( 'post_type' => BP_SC_TYPE, 'fields' => 'ids', 'posts_per_page' => -1, 'meta_key' => '_bp_sc_status', 'meta_value' => 'open' ) ) ); // phpcs:ignore WordPress.DB.SlowDBQuery
-		if ( ! $open ) {
-			return;
-		}
-		foreach ( $menu as &$item ) {
-			if ( 'edit.php?post_type=' . BP_SC_TYPE === $item[2] ) {
-				$item[0] .= ' <span class="awaiting-mod"><span class="pending-count">' . (int) $open . '</span></span>';
-			}
-		}
-	},
-	99
-);
-
 // The single edit screen is not useful for these; send people to the page instead.
 // Only for "edit": trash, restore and delete-permanently also go through post.php and must run normally.
 add_action(
@@ -454,7 +460,7 @@ add_action(
 		$action = sanitize_key( $_GET['action'] ?? 'edit' ); // phpcs:ignore WordPress.Security.NonceVerification
 		if ( $id && 'edit' === $action && BP_SC_TYPE === get_post_type( $id ) && 'trash' !== get_post_status( $id ) ) {
 			$page = (string) get_post_meta( $id, '_bp_sc_page_url', true );
-			wp_safe_redirect( $page ? add_query_arg( 'bp-comment', $id, $page ) : admin_url( 'edit.php?post_type=' . BP_SC_TYPE ) );
+			wp_safe_redirect( $page ? add_query_arg( 'bp-comment', $id, $page ) : bp_sc_dashboard_url() );
 			exit;
 		}
 	}

@@ -104,6 +104,7 @@
     if (t === 'form') return 'Form';
     if (['input', 'select', 'textarea', 'label'].includes(t)) return 'Form field';
     if (t === 'svg') return 'Icon';
+    if (t === 'summary' || t === 'details') return 'Question';
     if (['span', 'b', 'strong', 'em', 'small', 'i', 'mark'].includes(t)) return 'Text';
     return getComputedStyle(el).backgroundImage !== 'none' ? 'Image box' : 'Box';
   };
@@ -576,18 +577,19 @@
 
   /* ---------------- start ---------------- */
   load().then(() => {
-    const wanted = new URLSearchParams(location.search).get('bp-comment');
-    // Comment mode always starts off; only a click (or a link to a specific comment) turns it on.
+    const query = new URLSearchParams(location.search);
+    const wanted = query.get('bp-comment');
+    const review = query.has('bp-comments'); // "Review the site" / "Open page" in the dashboard.
+    // Comment mode always starts off; only a click (or a link from the dashboard) turns it on.
     try { sessionStorage.removeItem('bp-sc-on'); } catch (e) { /* storage blocked */ }
     const c = wanted && comments.find((x) => String(x.id) === wanted);
-    if (wanted) {
+    if (wanted || review) {
       const clean = new URL(location.href);
       clean.searchParams.delete('bp-comment');
+      clean.searchParams.delete('bp-comments');
       history.replaceState(history.state, '', clean);
     }
-    if (c) {
-      setMode(true);
-      setTimeout(() => focusComment(c), 600);
-    }
+    if (c || review) setMode(true);
+    if (c) setTimeout(() => focusComment(c), 600);
   });
 })();
