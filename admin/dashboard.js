@@ -622,4 +622,15 @@
 
   render();
   load();
+
+  // Back from the Trash: after deleting its last comments, or because it was already empty.
+  // ("removed", not WordPress's own "deleted", which wp-admin strips from the address before this runs.)
+  const deleted = Number(params.get('removed')) || 0;
+  if (deleted || params.get('trash') === 'empty') {
+    toast(deleted ? `${plural(deleted, 'comment', 'comments')} deleted permanently${state.trash ? '' : '. The Trash is now empty.'}` : 'The Trash is empty');
+    const u = new URL(location.href);
+    u.searchParams.delete('removed');
+    u.searchParams.delete('trash');
+    history.replaceState(null, '', u);
+  }
 })();

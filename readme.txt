@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.1
+Stable tag: 1.3.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,10 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.3.2 =
+* An empty Trash (for example after deleting its last comments) now returns to the dashboard with a message, instead of showing an empty WordPress list.
+* The Trash screen no longer shows the old All, Open and Resolved links.
 
 = 1.3.1 =
 * Dashboard: a Select all checkbox above the list (and Ctrl+A) selects every comment in the current view for bulk Resolve, Reopen or Trash.

@@ -54,7 +54,17 @@ add_action(
 add_action(
 	'load-edit.php',
 	function () {
-		if ( BP_SC_TYPE !== ( $_GET['post_type'] ?? '' ) || 'trash' === ( $_GET['post_status'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+		if ( BP_SC_TYPE !== ( $_GET['post_type'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			return;
+		}
+		if ( 'trash' === ( $_GET['post_status'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			// An empty Trash (for example after deleting the last comments in it) is just a blank WordPress list:
+			// go back to the dashboard and say so there.
+			if ( ! (int) ( wp_count_posts( BP_SC_TYPE )->trash ?? 0 ) ) {
+				$deleted = absint( $_GET['deleted'] ?? 0 ); // phpcs:ignore WordPress.Security.NonceVerification
+				wp_safe_redirect( bp_sc_dashboard_url( $deleted ? array( 'removed' => $deleted ) : array( 'trash' => 'empty' ) ) );
+				exit;
+			}
 			return;
 		}
 		$status = sanitize_key( $_GET['bp_status'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification

@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.3.1
+ * Version:           1.3.2
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,7 +19,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.3.1' );
+define( 'BP_SC_VERSION', '1.3.2' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
 
@@ -432,6 +432,10 @@ add_filter(
 	'views_edit-' . BP_SC_TYPE,
 	function ( $views ) {
 		unset( $views['publish'], $views['draft'], $views['pending'], $views['private'] );
+		// The Trash screen is the only list still shown; Open and Resolved live in the dashboard.
+		if ( 'trash' === ( $_GET['post_status'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			return array_intersect_key( $views, array( 'trash' => 1 ) );
+		}
 		$base = admin_url( 'edit.php?post_type=' . BP_SC_TYPE );
 		$cur  = sanitize_key( $_GET['bp_status'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
 		foreach ( array( 'open' => __( 'Open', 'bp-site-comments' ), 'resolved' => __( 'Resolved', 'bp-site-comments' ) ) as $k => $label ) {
