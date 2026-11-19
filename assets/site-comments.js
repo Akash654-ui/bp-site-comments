@@ -72,6 +72,9 @@
   // The few rules that must reach the page itself: comment cursor and the admin bar item.
   const pageStyle = h('style', { id: 'bp-site-comments-page' }, `
     html.${UI}-on body *:not(#bp-site-comments) { cursor: crosshair !important; }
+    /* iPhone and iPad Safari only send a tap on plain text or a box to a page-wide click listener
+       when the element looks clickable; without this, tapping a paragraph in comment mode did nothing. */
+    @media (hover: none) { html.${UI}-on body *:not(#bp-site-comments) { cursor: pointer !important; -webkit-tap-highlight-color: transparent; } }
     html.${UI}-on body { -webkit-user-select: none; user-select: none; }
     #bp-site-comments { all: initial; position: fixed; inset: 0; z-index: 2147483000; pointer-events: none; }
     html.${UI}-on #wpadminbar #wp-admin-bar-bp-site-comments > .ab-item { background: #c8202b; color: #fff; }
@@ -148,6 +151,33 @@
   const visibleRect = (el) => {
     const r = el?.getBoundingClientRect();
     return r && (r.width || r.height) ? r : null;
+  };
+  // The part of an element that can actually be seen: its box cut by every ancestor that clips
+  // (scrolling lists, carousels, tickers). Null when none of it shows, so its pin hides instead of
+  // floating over other content. The clipping ancestors are looked up once per element.
+  const clippers = new WeakMap();
+  const clipsFor = (el) => {
+    let list = clippers.get(el);
+    if (!list) {
+      list = [];
+      for (let n = el.parentElement; n && n !== doc.body && n !== root; n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') list.push(n);
+      }
+      clippers.set(el, list);
+    }
+    return list;
+  };
+  const shownRect = (el) => {
+    const r = visibleRect(el);
+    if (!r || (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true }))) return null;
+    let { left, top, right, bottom } = r;
+    for (const n of clipsFor(el)) {
+      const c = n.getBoundingClientRect();
+      left = Math.max(left, c.left); top = Math.max(top, c.top); right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+      if (right - left < 2 || bottom - top < 2) return null;
+    }
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
   };
 
   /* ---------------- UI ---------------- */
@@ -288,23 +318,44 @@
   addEventListener('resize', reflow);
 
   // In comment mode a click comments instead of following links or pressing buttons.
-  // Touch is left alone (blocking touchstart would stop scrolling and taps on phones); the click
-  // that follows a tap is caught below like any other.
+  // Touch is left alone (blocking touchstart would stop scrolling and taps on phones).
   const swallow = (e) => {
     if (!on || fromUs(e) || e.pointerType === 'touch') return;
     e.preventDefault();
     e.stopPropagation();
   };
   ['pointerdown', 'mousedown', 'mouseup', 'submit'].forEach((t) => doc.addEventListener(t, swallow, { capture: true, passive: false }));
+  const commentAt = (node) => {
+    if (openPopover) { closePopover(); return; }
+    // The element under the click (a tap has no hover), or the wider box picked with the Up key around it.
+    const base = pick(node);
+    const el = lockedEl && lockedEl.contains(node) ? lockedEl : base;
+    if (el) compose(el);
+  };
+  // Taps are recognised here rather than from the click: Safari on iPhone and iPad sends no click at
+  // all for a tap on plain text or a box, so comment mode did nothing there. A finger that moves
+  // (a scroll) or stays down (a long press) is not a tap.
+  let tapStart = null;
+  let lastTap = 0;
+  doc.addEventListener('pointerdown', (e) => {
+    tapStart = on && e.pointerType === 'touch' && e.isPrimary && !fromUs(e) ? { x: e.clientX, y: e.clientY, t: e.timeStamp } : null;
+  }, { capture: true, passive: true });
+  doc.addEventListener('pointercancel', () => { tapStart = null; }, { capture: true, passive: true });
+  doc.addEventListener('pointerup', (e) => {
+    const s = tapStart;
+    tapStart = null;
+    if (!s || !on || e.pointerType !== 'touch' || fromUs(e)) return;
+    if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10 || e.timeStamp - s.t > 700) return;
+    lastTap = Date.now();
+    commentAt(e.target);
+  }, { capture: true, passive: true });
   doc.addEventListener('click', (e) => {
     if (!on || fromUs(e)) return;
     e.preventDefault();
     e.stopPropagation();
-    if (openPopover) { closePopover(); return; }
-    // The element under the click (a tap has no hover), or the wider box picked with the Up key around it.
-    const base = pick(e.target);
-    const el = lockedEl && lockedEl.contains(e.target) ? lockedEl : base;
-    if (el) compose(el);
+    // The click some browsers still send after a tap was already handled above.
+    if (Date.now() - lastTap < 800) return;
+    commentAt(e.target);
   }, true);
 
   /* ---------------- keyboard ---------------- */
@@ -499,11 +550,16 @@
     placePins();
   };
 
-  // Elements per comment, so following them every frame stays cheap.
+  // Elements per comment, so following them every frame stays cheap. An element that is not on the
+  // page (removed, or not rendered yet) is looked for again at most once a second: searching the
+  // whole page for its text on every frame made long pages stutter.
   const elCache = new Map();
   const elFor = (c) => {
-    let el = elCache.get(c.id);
-    if (!el || !el.isConnected) { el = findEl(c); elCache.set(c.id, el); }
+    const hit = elCache.get(c.id);
+    if (hit?.el?.isConnected) return hit.el;
+    if (hit && !hit.el && performance.now() - hit.at < 1000) return null;
+    const el = findEl(c);
+    elCache.set(c.id, { el, at: performance.now() });
     return el;
   };
   // Content can move without any resize (entrance animations, sliders, sticky bars): keep pins on it.
@@ -523,15 +579,22 @@
   const placePins = () => {
     if (!on) return;
     const taken = [];
+    // A pin under the toolbar or the open list could not be tapped (on phones the toolbar spans the
+    // screen): it waits there hidden until the page is scrolled.
+    const covers = [bar, panel].filter((n) => !n.hidden).map((n) => n.getBoundingClientRect());
+    const covered = (x, y) => covers.some((c) => x + 26 > c.left && x < c.right && y + 26 > c.top && y < c.bottom);
     pins.querySelectorAll('.pin').forEach((pin) => {
       const c = comments.find((x) => String(x.id) === pin.dataset.id);
-      const r = c && visibleRect(elFor(c));
+      const el = c && elFor(c);
+      const r = el && shownRect(el);
       pin.hidden = !r || r.bottom < 0 || r.top > innerHeight;
       if (pin.hidden) return;
       // Top-left corner of the element, where reading starts; nudge pins that would overlap.
       let x = Math.min(Math.max(r.left - 13, 6), innerWidth - 36);
       const y = Math.max(r.top - 13, 6);
       while (taken.some(([tx, ty]) => Math.abs(tx - x) < 26 && Math.abs(ty - y) < 26)) x += 30;
+      pin.hidden = covered(x, y);
+      if (pin.hidden) return;
       taken.push([x, y]);
       // `translate`, not `transform`: the hover `scale` is applied after `transform` and would scale
       // the position too, making the pin jump away from the pointer.

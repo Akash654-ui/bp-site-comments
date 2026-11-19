@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.2
+Stable tag: 1.3.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,12 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.3.3 =
+* iPhone and iPad: tapping text, headings or boxes in Comment mode now opens the comment box (Safari sends no click for those taps).
+* Pins no longer float over the page when their element is scrolled out of view inside a scrolling list, carousel or ticker.
+* Pins behind the Comment toolbar or the comment list stay hidden until scrolled into the clear, so every visible pin can be clicked.
+* Pages stay smooth when a commented element has been removed from the page.
 
 = 1.3.2 =
 * An empty Trash (for example after deleting its last comments) now returns to the dashboard with a message, instead of showing an empty WordPress list.
