@@ -43,7 +43,7 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 | Who | Can |
 | --- | --- |
 | Any logged-in user | Comment, reply, and resolve or reopen their own comments. Edit or delete each of their own comments and replies for 15 minutes after posting |
-| Editors and administrators (`edit_others_posts`) | Also resolve, reopen and delete anyone's comments and replies at any time, and see the dashboard list. Nobody can change someone else's text |
+| Editors and administrators (`edit_others_posts`) | Also resolve, reopen and delete anyone's comment (with its replies) at any time, using Delete at the bottom of the comment or the dashboard's Trash, and see the dashboard list. Nobody can change someone else's text |
 
 Change these with filters, for example in a small mu-plugin or your theme's `functions.php`:
 

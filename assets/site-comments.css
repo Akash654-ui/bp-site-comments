@@ -235,7 +235,6 @@ kbd + kbd { margin-left: 3px; }
 .link-btn:disabled { opacity: 0.5; }
 .msg__text a { color: var(--accent-dark); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .msg__text a:hover { color: var(--accent); }
-.pop__foot--end { justify-content: flex-end; }
 .link-btn { padding: 0 2px; border: 0; background: none; color: var(--soft); font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { color: var(--ink); }
 .edit { display: grid; gap: 8px; margin-top: 4px; }

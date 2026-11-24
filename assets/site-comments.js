@@ -255,7 +255,6 @@
   };
   const editable = (c) => c.mine && Date.now() < (c.editUntil || 0);
   const deletable = (c) => editable(c) || !!cfg.manage;
-  const replyDeletable = (r) => editable(r) || (!!cfg.manage && !!r.id);
   const minutesLeft = (c) => Math.max(1, Math.ceil(((c.editUntil || 0) - Date.now()) / 60000));
   const visible = () => comments.filter((c) => showResolved || c.status !== 'resolved');
   const openCount = () => comments.filter((c) => c.status !== 'resolved').length;
@@ -515,11 +514,11 @@
     const el = findEl(c);
     const n = comments.indexOf(c) + 1;
     const canResolve = c.mine || cfg.manage;
-    // Every message you wrote (the comment or a reply) has its own Edit and Delete for 15 minutes.
+    // Every message you wrote (the comment or a reply) has its own Edit and Delete for 15 minutes only.
+    // Removing the whole comment with its replies is the Delete button at the bottom.
     const note = (r) => (editable(r) ? `<p class="msg__window" data-window>You can edit or delete this for ${minutesLeft(r)} more minute${minutesLeft(r) === 1 ? '' : 's'}</p>` : '');
     const msg = (r, key) => {
-      const canDel = key === 'root' ? deletable(c) : replyDeletable(r);
-      const acts = [editable(r) ? '<button type="button" class="link-btn" data-edit>Edit</button>' : '', canDel ? '<button type="button" class="link-btn link-btn--danger" data-del>Delete</button>' : ''].join('');
+      const acts = editable(r) ? '<button type="button" class="link-btn" data-edit>Edit</button><button type="button" class="link-btn link-btn--danger" data-del>Delete</button>' : '';
       return `<li class="msg" data-msg="${esc(key)}">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${acts ? `<span class="msg__acts">${acts}</span>` : ''}</p><p class="msg__text">${rich(r.text)}</p>${note(r)}</div></li>`;
     };
     const pop = popover(el, `
@@ -531,7 +530,8 @@
       ${!el ? '<p class="note">This part of the page has changed since the comment was left.</p>' : ''}
       <ol class="thread">${msg(c, 'root')}${c.replies.map((x, i) => msg(x, x.id || `old-${i}`)).join('')}</ol>
       <textarea maxlength="5000" class="input input--reply" rows="2" aria-label="Reply" placeholder="Reply…"></textarea>
-      <div class="pop__foot pop__foot--end">
+      <div class="pop__foot">
+        <span class="pop__actions">${deletable(c) ? '<button type="button" class="btn btn--ghost btn--danger" data-del-all>Delete</button>' : ''}</span>
         <span class="pop__actions">
           ${canResolve ? `<button type="button" class="btn btn--ghost" data-status>${c.status === 'resolved' ? 'Reopen' : `${icon.check}Resolve`}</button>` : ''}
           <button type="button" class="btn" data-reply disabled>Reply</button>
@@ -563,7 +563,7 @@
     }
     pop.addEventListener('click', async (e) => {
       const editBtn = e.target.closest('[data-edit]');
-      const delBtn = e.target.closest('[data-del]');
+      const delBtn = e.target.closest('[data-del], [data-del-all]');
       if (editBtn) {
         const m = messageOf(editBtn);
         const body = editBtn.closest('.msg').querySelector('.msg__text');
@@ -583,11 +583,12 @@
         return;
       }
       if (delBtn) {
-        const m = messageOf(delBtn);
+        // The bottom Delete removes the whole comment and its replies (managers any time, authors for 15 minutes).
+        const m = delBtn.matches('[data-del-all]') ? { key: 'root', r: c, path: `/${c.id}` } : messageOf(delBtn);
         // A second click confirms, so one slip of the finger does not remove anything.
         if (!delBtn.dataset.sure) {
           delBtn.dataset.sure = '1';
-          delBtn.textContent = m.key === 'root' && c.replies.length ? 'Delete with replies?' : 'Delete for sure?';
+          delBtn.textContent = m.key === 'root' && c.replies.length ? 'Delete with replies?' : (delBtn.matches('[data-del-all]') ? 'Delete this comment?' : 'Delete for sure?');
           return;
         }
         delBtn.disabled = true;

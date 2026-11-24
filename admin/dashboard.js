@@ -368,7 +368,7 @@
     const msg = (r, first) => `
       <li class="${first ? 'is-first' : ''}">
         ${avatar(r.author, r.avatar, first ? 'lg' : '')}
-        <div><p class="bpsc-msg__by"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time>${!first && r.can_delete && r.id ? `<button type="button" class="bpsc-msg__del" data-act="del-reply" data-reply="${esc(r.id)}">Delete</button>` : ''}</p><p class="bpsc-msg__text">${rich(r.text)}</p></div>
+        <div><p class="bpsc-msg__by"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time>${!first && r.mine && r.id ? `<button type="button" class="bpsc-msg__del" data-act="del-reply" data-reply="${esc(r.id)}" title="You can delete your reply for 15 minutes after posting">Delete</button>` : ''}</p><p class="bpsc-msg__text">${rich(r.text)}</p></div>
       </li>`;
     pane.innerHTML = `
       <header class="bpsc-pane__head">

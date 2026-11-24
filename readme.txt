@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.4.1
+Stable tag: 1.4.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,10 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.4.2 =
+* The Delete button at the bottom of a comment is back: it removes the whole comment with its replies (site managers any time, the author for 15 minutes).
+* Edit and Delete next to each message are only for its author and only for 15 minutes after posting, then they go away for everyone (site and dashboard).
 
 = 1.4.1 =
 * Every message you wrote has its own Edit and Delete for 15 minutes: your comment and each of your replies (deleting asks once more to be sure). The old Delete button for the whole thread is gone.
