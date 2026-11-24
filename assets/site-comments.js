@@ -36,6 +36,16 @@
   };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const nl2br = (s) => esc(s).replace(/\n/g, '<br>');
+  // Comment text with its web addresses and emails made clickable (they open in a new tab).
+  // The text is split around the addresses and every piece escaped, so nothing in it can become markup.
+  const URLS = /(\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+\.[^\s<>"']+|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b)/gi;
+  const rich = (text) => String(text ?? '').split(URLS).map((part, i) => {
+    if (i % 2 === 0) return nl2br(part);
+    const tail = (part.match(/[).,!?;:]+$/) || [''])[0];   // "see example.com." keeps the full stop as text
+    const url = tail ? part.slice(0, -tail.length) : part;
+    const href = url.includes('@') && !/^https?:/i.test(url) ? `mailto:${url}` : (/^www\./i.test(url) ? `https://${url}` : url);
+    return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer nofollow">${esc(url)}</a>${esc(tail)}`;
+  }).join('');
   const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const ago = (iso) => {
     let v = Math.max(1, (Date.now() - new Date(iso)) / 1000);
@@ -238,9 +248,14 @@
   /* ---------------- state ---------------- */
   // Authors can edit or delete their own comment for a short while after posting (15 minutes unless the
   // site changes it). The server says how many seconds are left; the deadline is kept on this clock.
-  const stamp = (c) => Object.assign(c, { editUntil: Date.now() + (Number(c.edit_left) || 0) * 1000 });
+  const stamp = (c) => {
+    const at = (x) => Object.assign(x, { editUntil: Date.now() + (Number(x.edit_left) || 0) * 1000 });
+    (c.replies || []).forEach(at);
+    return at(c);
+  };
   const editable = (c) => c.mine && Date.now() < (c.editUntil || 0);
   const deletable = (c) => editable(c) || !!cfg.manage;
+  const replyDeletable = (r) => editable(r) || (!!cfg.manage && !!r.id);
   const minutesLeft = (c) => Math.max(1, Math.ceil(((c.editUntil || 0) - Date.now()) / 60000));
   const visible = () => comments.filter((c) => showResolved || c.status !== 'resolved');
   const openCount = () => comments.filter((c) => c.status !== 'resolved').length;
@@ -340,8 +355,17 @@
     e.stopPropagation();
   };
   ['pointerdown', 'mousedown', 'mouseup', 'submit'].forEach((t) => doc.addEventListener(t, swallow, { capture: true, passive: false }));
+  // Something typed in the open box is never thrown away by a stray click on the page or a pin:
+  // the box stays, says so, and puts the cursor back. Cancel, Esc or the close button still discard it.
+  const keepDraft = () => {
+    const typed = [...(openPopover?.el.querySelectorAll('textarea') || [])].find((t) => t.value.trim());
+    if (!typed) return false;
+    say('Post or cancel what you are writing first', true);
+    typed.focus({ preventScroll: true });
+    return true;
+  };
   const commentAt = (node) => {
-    if (openPopover) { closePopover(); return; }
+    if (openPopover) { if (!keepDraft()) closePopover(); return; }
     // The element under the click (a tap has no hover), or the wider box picked with the Up key around it.
     const base = pick(node);
     const el = lockedEl && lockedEl.contains(node) ? lockedEl : base;
@@ -452,7 +476,7 @@
     const pop = popover(el, `
       ${targetHead(kind(el), snippet, el)}
       ${wider || inner.length ? `<div class="pop__scope">${inner.length ? '<button type="button" class="scope-btn" data-narrow>&minus; Smaller area</button>' : ''}${wider ? '<button type="button" class="scope-btn" data-wider>+ Bigger area</button>' : ''}</div>` : ''}
-      <textarea class="input" rows="3" aria-label="Your comment" placeholder="What should change here?"></textarea>
+      <textarea maxlength="5000" class="input" rows="3" aria-label="Your comment" placeholder="What should change here?"></textarea>
       <div class="pop__foot">
         <span class="hint"><kbd>Ctrl</kbd><kbd>Enter</kbd> to post</span>
         <span class="pop__actions">
@@ -491,9 +515,13 @@
     const el = findEl(c);
     const n = comments.indexOf(c) + 1;
     const canResolve = c.mine || cfg.manage;
-    const canEdit = editable(c);
-    const windowNote = () => (editable(c) ? `<p class="msg__window" data-window>You can edit or delete this for ${minutesLeft(c)} more minute${minutesLeft(c) === 1 ? '' : 's'}</p>` : '');
-    const msg = (r, own = false) => `<li class="msg">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${own ? '<button type="button" class="link-btn" data-edit>Edit</button>' : ''}</p><p class="msg__text">${nl2br(r.text)}</p>${own ? windowNote() : ''}</div></li>`;
+    // Every message you wrote (the comment or a reply) has its own Edit and Delete for 15 minutes.
+    const note = (r) => (editable(r) ? `<p class="msg__window" data-window>You can edit or delete this for ${minutesLeft(r)} more minute${minutesLeft(r) === 1 ? '' : 's'}</p>` : '');
+    const msg = (r, key) => {
+      const canDel = key === 'root' ? deletable(c) : replyDeletable(r);
+      const acts = [editable(r) ? '<button type="button" class="link-btn" data-edit>Edit</button>' : '', canDel ? '<button type="button" class="link-btn link-btn--danger" data-del>Delete</button>' : ''].join('');
+      return `<li class="msg" data-msg="${esc(key)}">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${acts ? `<span class="msg__acts">${acts}</span>` : ''}</p><p class="msg__text">${rich(r.text)}</p>${note(r)}</div></li>`;
+    };
     const pop = popover(el, `
       <div class="pop__head">
         <span class="num">${c.status === 'resolved' ? icon.check : n}</span>
@@ -501,10 +529,9 @@
         <button type="button" class="icon-btn" data-close aria-label="Close">${icon.close}</button>
       </div>
       ${!el ? '<p class="note">This part of the page has changed since the comment was left.</p>' : ''}
-      <ol class="thread">${msg(c, canEdit)}${c.replies.map((x) => msg(x)).join('')}</ol>
-      <textarea class="input input--reply" rows="2" aria-label="Reply" placeholder="Reply…"></textarea>
-      <div class="pop__foot">
-        <span class="pop__actions">${deletable(c) ? '<button type="button" class="btn btn--ghost btn--danger" data-delete>Delete</button>' : ''}</span>
+      <ol class="thread">${msg(c, 'root')}${c.replies.map((x, i) => msg(x, x.id || `old-${i}`)).join('')}</ol>
+      <textarea maxlength="5000" class="input input--reply" rows="2" aria-label="Reply" placeholder="Reply…"></textarea>
+      <div class="pop__foot pop__foot--end">
         <span class="pop__actions">
           ${canResolve ? `<button type="button" class="btn btn--ghost" data-status>${c.status === 'resolved' ? 'Reopen' : `${icon.check}Resolve`}</button>` : ''}
           <button type="button" class="btn" data-reply disabled>Reply</button>
@@ -518,30 +545,64 @@
     pop.querySelector('[data-close]').addEventListener('click', closePopover);
 
     const replace = (fresh) => { comments[comments.indexOf(c)] = stamp(fresh); updateCounts(); renderPins(); renderPanel(); return fresh; };
-    // The countdown under your own comment; when time is up, Edit and Delete go away
-    // (unless something is being typed, which the server would then turn down with a message).
-    if (canEdit) {
+    const messageOf = (node) => {
+      const key = node.closest('.msg').dataset.msg;
+      return key === 'root' ? { key, r: c, path: `/${c.id}` } : { key, r: c.replies.find((x) => x.id === key), path: `/${c.id}/replies/${key}` };
+    };
+    // The countdown under your own messages; when one runs out, its Edit and Delete go away
+    // (unless something is being typed: the server then turns the change down with a message).
+    if ([c, ...c.replies].some(editable)) {
       const tick = setInterval(() => {
         if (!pop.isConnected) { clearInterval(tick); return; }
-        if (editable(c)) { const w = pop.querySelector('[data-window]'); if (w) w.outerHTML = windowNote(); return; }
+        const expired = [...pop.querySelectorAll('[data-window]')].some((w) => !editable(messageOf(w).r || {}));
+        if (!expired) { pop.querySelectorAll('[data-window]').forEach((w) => { w.outerHTML = note(messageOf(w).r); }); return; }
+        if (pop.querySelector('.edit') || ta.value.trim()) return;
         clearInterval(tick);
-        if (!pop.querySelector('.edit') && !ta.value.trim()) thread(c);
+        thread(c);
       }, 15000);
     }
-    pop.querySelector('[data-edit]')?.addEventListener('click', (e) => {
-      const body = e.currentTarget.closest('.msg').querySelector('.msg__text');
-      body.outerHTML = '<div class="edit"><textarea class="input input--reply" aria-label="Edit your comment"></textarea><div class="pop__actions"><button type="button" class="btn btn--ghost" data-edit-cancel>Cancel</button><button type="button" class="btn" data-edit-save>Save</button></div></div>';
-      e.currentTarget.remove();
-      const box = pop.querySelector('.edit textarea');
-      box.value = c.text;
-      const saveEdit = pop.querySelector('[data-edit-save]');
-      submitOnCtrlEnter(box, saveEdit);
-      pop.querySelector('[data-edit-cancel]').addEventListener('click', () => thread(c));
-      saveEdit.addEventListener('click', async () => {
-        saveEdit.disabled = true;
-        try { thread(replace(await api(`/${c.id}`, { method: 'PATCH', body: { text: box.value } }))); say('Comment updated'); }
-        catch (err) { say(err.message, true); saveEdit.disabled = false; }
-      });
+    pop.addEventListener('click', async (e) => {
+      const editBtn = e.target.closest('[data-edit]');
+      const delBtn = e.target.closest('[data-del]');
+      if (editBtn) {
+        const m = messageOf(editBtn);
+        const body = editBtn.closest('.msg').querySelector('.msg__text');
+        body.outerHTML = `<div class="edit"><textarea maxlength="5000" class="input input--reply" aria-label="Edit your ${m.key === 'root' ? 'comment' : 'reply'}"></textarea><div class="pop__actions"><button type="button" class="btn btn--ghost" data-edit-cancel>Cancel</button><button type="button" class="btn" data-edit-save>Save</button></div></div>`;
+        editBtn.closest('.msg__acts')?.remove();
+        const box = pop.querySelector('.edit textarea');
+        box.value = m.r.text;
+        const saveEdit = pop.querySelector('[data-edit-save]');
+        submitOnCtrlEnter(box, saveEdit);
+        pop.querySelector('[data-edit-cancel]').addEventListener('click', () => thread(c));
+        saveEdit.addEventListener('click', async () => {
+          if (!box.value.trim()) { say('Write something first, or use Delete.', true); return; }
+          saveEdit.disabled = true;
+          try { thread(replace(await api(m.path, { method: 'PATCH', body: { text: box.value } }))); say(m.key === 'root' ? 'Comment updated' : 'Reply updated'); }
+          catch (err) { say(err.message, true); saveEdit.disabled = false; }
+        });
+        return;
+      }
+      if (delBtn) {
+        const m = messageOf(delBtn);
+        // A second click confirms, so one slip of the finger does not remove anything.
+        if (!delBtn.dataset.sure) {
+          delBtn.dataset.sure = '1';
+          delBtn.textContent = m.key === 'root' && c.replies.length ? 'Delete with replies?' : 'Delete for sure?';
+          return;
+        }
+        delBtn.disabled = true;
+        try {
+          if (m.key === 'root') {
+            await api(m.path, { method: 'DELETE' });
+            comments = comments.filter((x) => x !== c);
+            closePopover(); updateCounts(); renderPins(); renderPanel();
+            say('Comment deleted');
+          } else {
+            thread(replace(await api(m.path, { method: 'DELETE' })));
+            say('Reply deleted');
+          }
+        } catch (err) { say(err.message, true); delBtn.disabled = false; }
+      }
     });
     send.addEventListener('click', async () => {
       send.disabled = true;
@@ -555,16 +616,6 @@
         say(fresh.status === 'resolved' ? 'Marked as resolved' : 'Reopened');
       } catch (err) { say(err.message, true); }
     });
-    pop.querySelector('[data-delete]')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      if (!btn.dataset.sure) { btn.dataset.sure = '1'; btn.textContent = 'Delete this comment?'; return; }
-      try {
-        await api(`/${c.id}`, { method: 'DELETE' });
-        comments = comments.filter((x) => x !== c);
-        closePopover(); updateCounts(); renderPins(); renderPanel();
-        say('Comment deleted');
-      } catch (err) { say(err.message, true); }
-    });
   };
 
   /* ---------------- pins ---------------- */
@@ -574,7 +625,7 @@
     visible().forEach((c) => {
       const n = comments.indexOf(c) + 1;
       const pin = h('button', { type: 'button', class: `pin${c.status === 'resolved' ? ' is-resolved' : ''}`, 'data-id': c.id, 'aria-label': `Comment ${n} by ${c.author}: ${c.text.slice(0, 80)}` }, c.status === 'resolved' ? icon.check : String(n));
-      pin.addEventListener('click', () => thread(c));
+      pin.addEventListener('click', () => { if (!keepDraft()) thread(c); });
       pin.addEventListener('pointerenter', () => { if (!openPopover) drawBox(findEl(c), ''); });
       pin.addEventListener('pointerleave', () => { if (!openPopover) hl.classList.remove('is-on'); });
       pins.append(pin);
@@ -656,7 +707,7 @@
           <span class="row__text">${esc(c.text)}</span>
           <span class="row__meta">${esc(c.author)} · ${ago(c.date)}${c.replies.length ? ` · ${c.replies.length} repl${c.replies.length === 1 ? 'y' : 'ies'}` : ''}${findEl(c) ? '' : ' · <em>element changed</em>'}</span>
         </span></button>`);
-      li.firstElementChild.addEventListener('click', () => focusComment(c));
+      li.firstElementChild.addEventListener('click', () => { if (!keepDraft()) focusComment(c); });
       list.append(li);
     });
   };

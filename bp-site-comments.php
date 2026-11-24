@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.4.0
+ * Version:           1.4.1
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,7 +19,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.4.0' );
+define( 'BP_SC_VERSION', '1.4.1' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
 
@@ -101,6 +101,46 @@ function bp_sc_can_delete( WP_Post $post ): bool {
 	return bp_sc_edit_seconds_left( $post ) > 0 || bp_sc_can_manage();
 }
 
+/*
+ * Replies live in one JSON list per comment. Each new reply records its author's user ID and an ID of
+ * its own, so its author can edit or delete it during the same window. Replies saved before 1.4.1 have
+ * no author ID, so only a site manager can delete them.
+ */
+function bp_sc_replies( int $comment_id ): array {
+	$replies = json_decode( (string) get_post_meta( $comment_id, '_bp_sc_replies', true ) ?: '[]', true );
+	if ( ! is_array( $replies ) ) {
+		return array();
+	}
+	// Older replies get a stable ID from their content, so site managers can still delete them.
+	foreach ( $replies as &$reply ) {
+		if ( empty( $reply['id'] ) ) {
+			$reply['id'] = substr( md5( ( $reply['date'] ?? '' ) . '|' . ( $reply['author'] ?? '' ) . '|' . ( $reply['text'] ?? '' ) ), 0, 12 );
+		}
+	}
+	unset( $reply );
+	return $replies;
+}
+function bp_sc_save_replies( int $comment_id, array $replies ): void {
+	update_post_meta( $comment_id, '_bp_sc_replies', wp_slash( wp_json_encode( array_values( $replies ) ) ) );
+}
+function bp_sc_reply_seconds_left( array $reply ): int {
+	if ( empty( $reply['user'] ) || (int) $reply['user'] !== get_current_user_id() ) {
+		return 0;
+	}
+	return max( 0, (int) strtotime( (string) ( $reply['date'] ?? '' ) ) + bp_sc_edit_window() - time() );
+}
+/** A reply as the front end sees it: who may still change it, without the author's user ID. */
+function bp_sc_format_reply( array $reply ): array {
+	$left = bp_sc_reply_seconds_left( $reply );
+	unset( $reply['user'] );
+	return $reply + array(
+		'id'         => '',
+		'mine'       => $left > 0,
+		'edit_left'  => $left,
+		'can_delete' => ! empty( $reply['id'] ) && ( $left > 0 || bp_sc_can_manage() ),
+	);
+}
+
 /** A page's key: its path and query without tracking or comment params, so /menu/ and /menu/?utm=x match. */
 function bp_sc_page_key( string $url ): string {
 	$parts = wp_parse_url( $url );
@@ -158,7 +198,6 @@ add_action(
 function bp_sc_format( WP_Post $post ): array {
 	$meta    = fn( $k ) => (string) get_post_meta( $post->ID, "_bp_sc_{$k}", true );
 	$author  = get_userdata( (int) $post->post_author );
-	$replies = json_decode( $meta( 'replies' ) ?: '[]', true );
 	return array(
 		'id'        => $post->ID,
 		'text'      => bp_sc_text( $post ),
@@ -177,7 +216,7 @@ function bp_sc_format( WP_Post $post ): array {
 		// Text can be changed by its author only, and only for a short while after posting.
 		'edit_left' => bp_sc_edit_seconds_left( $post ),
 		'can_delete' => bp_sc_can_delete( $post ),
-		'replies'   => is_array( $replies ) ? $replies : array(),
+		'replies'   => array_map( 'bp_sc_format_reply', bp_sc_replies( $post->ID ) ),
 	);
 }
 
@@ -353,17 +392,70 @@ add_action(
 						return new WP_Error( 'bp_sc_bad', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
 					}
 					$user      = wp_get_current_user();
-					$replies   = json_decode( (string) get_post_meta( $post->ID, '_bp_sc_replies', true ) ?: '[]', true ) ?: array();
+					$replies   = bp_sc_replies( $post->ID );
 					$replies[] = array(
+						'id'     => substr( md5( uniqid( (string) $user->ID, true ) ), 0, 12 ),
+						'user'   => $user->ID,
 						'author' => $user->display_name,
 						'avatar' => get_avatar_url( $user->ID, array( 'size' => 64, 'default' => 'blank' ) ),
 						'text'   => $text,
 						'date'   => gmdate( 'c' ),
 					);
-					update_post_meta( $post->ID, '_bp_sc_replies', wp_slash( wp_json_encode( $replies ) ) );
+					bp_sc_save_replies( $post->ID, $replies );
 					do_action( 'bp_sc_reply_added', $post->ID );
 					return bp_sc_format( get_post( $post->ID ) );
 				},
+			)
+		);
+
+		// One reply: its author can edit or delete it during the edit window; managers can delete it any time.
+		register_rest_route(
+			$ns,
+			'/comments/(?P<id>\d+)/replies/(?P<reply>[a-f0-9]{12})',
+			array(
+				array(
+					'methods'             => 'PATCH',
+					'permission_callback' => $auth,
+					'args'                => array( 'text' => array( 'type' => 'string', 'required' => true ) ),
+					'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
+						$post    = $get_comment( $r );
+						$replies = $post ? bp_sc_replies( $post->ID ) : array();
+						$i       = array_search( (string) $r['reply'], array_column( $replies, 'id' ), true );
+						if ( false === $i ) {
+							return new WP_Error( 'bp_sc_missing', __( 'Reply not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
+						}
+						if ( ! bp_sc_reply_seconds_left( $replies[ $i ] ) ) {
+							return bp_sc_edit_closed( 'edit' );
+						}
+						$text = bp_sc_clean_text( $r['text'] );
+						if ( '' === $text ) {
+							return new WP_Error( 'bp_sc_empty', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
+						}
+						$replies[ $i ]['text'] = $text;
+						bp_sc_save_replies( $post->ID, $replies );
+						return bp_sc_format( get_post( $post->ID ) );
+					},
+				),
+				array(
+					'methods'             => 'DELETE',
+					'permission_callback' => $auth,
+					'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
+						$post    = $get_comment( $r );
+						$replies = $post ? bp_sc_replies( $post->ID ) : array();
+						$i       = array_search( (string) $r['reply'], array_column( $replies, 'id' ), true );
+						if ( false === $i ) {
+							return new WP_Error( 'bp_sc_missing', __( 'Reply not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
+						}
+						if ( ! bp_sc_reply_seconds_left( $replies[ $i ] ) && ! bp_sc_can_manage() ) {
+							return (int) ( $replies[ $i ]['user'] ?? 0 ) === get_current_user_id()
+								? bp_sc_edit_closed( 'delete' )
+								: new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can delete this reply.', 'bp-site-comments' ), array( 'status' => 403 ) );
+						}
+						array_splice( $replies, $i, 1 );
+						bp_sc_save_replies( $post->ID, $replies );
+						return bp_sc_format( get_post( $post->ID ) );
+					},
+				),
 			)
 		);
 	}

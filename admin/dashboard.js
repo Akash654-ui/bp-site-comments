@@ -14,6 +14,15 @@
 
   /* ---------------- helpers ---------------- */
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Comment text with web addresses and emails made clickable (new tab); every piece is escaped.
+  const URLS = /(\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+\.[^\s<>"']+|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b)/gi;
+  const rich = (text) => String(text ?? '').split(URLS).map((part, i) => {
+    if (i % 2 === 0) return esc(part);
+    const tail = (part.match(/[).,!?;:]+$/) || [''])[0];
+    const url = tail ? part.slice(0, -tail.length) : part;
+    const href = url.includes('@') && !/^https?:/i.test(url) ? `mailto:${url}` : (/^www\./i.test(url) ? `https://${url}` : url);
+    return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer nofollow">${esc(url)}</a>${esc(tail)}`;
+  }).join('');
   const initials = (n) => String(n || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const fullDate = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -359,7 +368,7 @@
     const msg = (r, first) => `
       <li class="${first ? 'is-first' : ''}">
         ${avatar(r.author, r.avatar, first ? 'lg' : '')}
-        <div><p class="bpsc-msg__by"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time></p><p class="bpsc-msg__text">${esc(r.text)}</p></div>
+        <div><p class="bpsc-msg__by"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time>${!first && r.can_delete && r.id ? `<button type="button" class="bpsc-msg__del" data-act="del-reply" data-reply="${esc(r.id)}">Delete</button>` : ''}</p><p class="bpsc-msg__text">${rich(r.text)}</p></div>
       </li>`;
     pane.innerHTML = `
       <header class="bpsc-pane__head">
@@ -378,7 +387,7 @@
         <ol class="bpsc-thread">${msg(c, true)}${c.replies.map((r) => msg(r, false)).join('')}</ol>
       </div>
       <div class="bpsc-compose">
-        <textarea rows="2" data-reply-text placeholder="Reply to ${esc(c.author)}…" aria-label="Reply to ${esc(c.author)}"></textarea>
+        <textarea rows="2" maxlength="5000" data-reply-text placeholder="Reply to ${esc(c.author)}…" aria-label="Reply to ${esc(c.author)}"></textarea>
         <div class="bpsc-compose__foot"><span><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span><button type="button" class="bpsc-btn bpsc-btn--dark bpsc-btn--sm" data-act="reply" disabled>${icon.send}Send</button></div>
       </div>`;
   };
@@ -518,6 +527,16 @@
       if (!c) return;
       if (act === 'status') setStatus([c.id], c.status === 'resolved' ? 'open' : 'resolved');
       else if (act === 'trash') trash([c.id]);
+      else if (act === 'del-reply') {
+        // Second click confirms.
+        if (!btn.dataset.sure) { btn.dataset.sure = '1'; btn.textContent = 'Delete for sure?'; return; }
+        btn.disabled = true;
+        try {
+          upsert(await api(`/${c.id}/replies/${btn.dataset.reply}`, { method: 'DELETE' }));
+          renderList(); renderPane();
+          toast('Reply deleted');
+        } catch (err) { toast(err.message, { bad: true }); btn.disabled = false; }
+      }
       else if (act === 'reply') {
         const box = $('[data-reply-text]');
         const text = box.value.trim();

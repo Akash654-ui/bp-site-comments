@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.4.0
+Stable tag: 1.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,13 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.4.1 =
+* Every message you wrote has its own Edit and Delete for 15 minutes: your comment and each of your replies (deleting asks once more to be sure). The old Delete button for the whole thread is gone.
+* Web addresses and email addresses in comments and replies are clickable and open in a new tab (site and dashboard).
+* A stray click on the page or another pin no longer throws away a comment you are typing.
+* Comments and replies stop at 5,000 characters while typing, the same limit the server keeps.
+* Site managers can delete individual replies, including ones saved before this version (also from the dashboard).
 
 = 1.4.0 =
 * Links stay usable in Comment mode: Ctrl + click (Cmd + click on Mac) or middle-click opens a link, and the comment box of a link has an "Open link" button (works on phones too).

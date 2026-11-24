@@ -229,7 +229,14 @@ kbd + kbd { margin-left: 3px; }
 .scope-btn { height: 26px; padding: 0 9px; border: 1px dashed #cfc6be; border-radius: 6px; background: var(--surface); color: var(--ink-2); font-size: 12px; font-weight: 600; }
 .scope-btn:hover { border-style: solid; border-color: var(--ink-2); color: var(--ink); }
 .scope-btn:focus-visible, .link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.link-btn { margin-left: auto; padding: 0 2px; border: 0; background: none; color: var(--soft); font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.msg__acts { display: inline-flex; gap: 10px; margin-left: auto; }
+.link-btn--danger { color: var(--accent-dark); }
+.link-btn--danger:hover { color: var(--accent); }
+.link-btn:disabled { opacity: 0.5; }
+.msg__text a { color: var(--accent-dark); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.msg__text a:hover { color: var(--accent); }
+.pop__foot--end { justify-content: flex-end; }
+.link-btn { padding: 0 2px; border: 0; background: none; color: var(--soft); font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { color: var(--ink); }
 .edit { display: grid; gap: 8px; margin-top: 4px; }
 .edit .pop__actions { justify-content: flex-end; }

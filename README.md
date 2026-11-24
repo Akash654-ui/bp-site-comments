@@ -13,7 +13,8 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 - **Private.** Only logged-in users can see or use it. Visitors load nothing: no script, no styles, no requests.
 - **Works with any theme.** The interface runs inside its own Shadow DOM, so theme CSS cannot restyle or hide it and none of its styles leak into the site. Colours are built to stay readable on any background (light, dark, brand red or photos).
 - **Safe clicks.** While Comment mode is on, links and buttons don't fire, so nobody navigates away by accident. To open a link anyway, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click it, middle-click it, or use **Open link** in its comment box (handy on phones).
-- **Fix your own mistakes.** Authors can edit or delete their own comment for 15 minutes after posting; a note shows the time left.
+- **Fix your own mistakes.** Every message you write (a comment or a reply) has its own Edit and Delete for 15 minutes after posting; a note shows the time left.
+- **Clickable links.** Web addresses and emails typed into comments and replies open in a new tab.
 - **Keyboard friendly.** <kbd>C</kbd> toggles Comment mode, <kbd>Enter</kbd> comments on the outlined element, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> posts, <kbd>Esc</kbd> closes.
 
 ## Requirements
@@ -41,8 +42,8 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 
 | Who | Can |
 | --- | --- |
-| Any logged-in user | Comment, reply, and resolve or reopen their own comments. Edit or delete their own comment for 15 minutes after posting |
-| Editors and administrators (`edit_others_posts`) | Also resolve, reopen and delete anyone's comments at any time, and see the dashboard list. Nobody can change someone else's text |
+| Any logged-in user | Comment, reply, and resolve or reopen their own comments. Edit or delete each of their own comments and replies for 15 minutes after posting |
+| Editors and administrators (`edit_others_posts`) | Also resolve, reopen and delete anyone's comments and replies at any time, and see the dashboard list. Nobody can change someone else's text |
 
 Change these with filters, for example in a small mu-plugin or your theme's `functions.php`:
 
@@ -63,7 +64,7 @@ add_filter( 'bp_sc_edit_window', fn() => 30 * MINUTE_IN_SECONDS );
 | --- | --- | --- |
 | `bp_sc_capability` | filter | Capability needed to comment (default `read`) |
 | `bp_sc_manage_capability` | filter | Capability needed to manage others' comments (default `edit_others_posts`) |
-| `bp_sc_edit_window` | filter | Seconds an author may edit or delete their own comment after posting (default `15 * MINUTE_IN_SECONDS`) |
+| `bp_sc_edit_window` | filter | Seconds an author may edit or delete their own comment or reply after posting (default `15 * MINUTE_IN_SECONDS`) |
 | `bp_sc_comment_added` | action | After a comment is created; receives the comment ID |
 | `bp_sc_reply_added` | action | After a reply is added; receives the comment ID |
 
@@ -87,6 +88,8 @@ All routes need a logged-in user and the `wp_rest` nonce.
 | `PATCH` | `/wp-json/bp-site-comments/v1/comments/{id}` | Edit `text` (author, within the edit window) or set `status` to `open` / `resolved` |
 | `DELETE` | `/wp-json/bp-site-comments/v1/comments/{id}` | Move a comment to the trash |
 | `POST` | `/wp-json/bp-site-comments/v1/comments/{id}/replies` | Add a reply (`text`) |
+| `PATCH` | `/wp-json/bp-site-comments/v1/comments/{id}/replies/{reply}` | Edit your own reply's `text` (within the edit window) |
+| `DELETE` | `/wp-json/bp-site-comments/v1/comments/{id}/replies/{reply}` | Delete a reply (its author within the edit window, or a site manager) |
 
 ## Data
 

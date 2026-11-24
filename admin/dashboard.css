@@ -195,6 +195,9 @@
 .bpsc-msg__by { display: flex; align-items: baseline; gap: 8px; }
 .bpsc-msg__by b { font-size: 13px; font-weight: 650; }
 .bpsc-msg__by time { color: var(--faint); font-size: 12px; }
+.bpsc-msg__del { margin-left: auto; padding: 0; border: 0; background: none; color: var(--red); font-size: 12px; font-weight: 600; cursor: pointer; }
+.bpsc-msg__del:hover { text-decoration: underline; }
+.bpsc-msg__text a { color: var(--red); text-decoration: underline; text-underline-offset: 2px; }
 .bpsc-msg__text { margin-top: 4px !important; color: var(--ink); font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bpsc-thread li.is-first .bpsc-msg__text { font-size: 15px; }
 .bpsc-thread li:not(.is-first) .bpsc-msg__text { padding: 10px 12px; border-radius: 4px 12px 12px 12px; background: var(--bg); }
