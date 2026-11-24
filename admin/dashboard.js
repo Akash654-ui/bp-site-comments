@@ -158,6 +158,8 @@
     return numberCache.get(c.id);
   };
   const find = (id) => state.comments.find((c) => c.id === id);
+  // Authors can delete their own comment only for a short while after posting; managers always can.
+  const canTrash = (c) => (c.can_delete ?? c.can_edit);
   const inStatus = (c) => state.status === 'all' || c.status === state.status;
 
   const filtered = () => {
@@ -294,7 +296,7 @@
         </span>
         <span class="bpsc-row__acts" data-stop>
           ${c.can_edit ? `<button type="button" data-act="status" title="${done ? 'Reopen (E)' : 'Resolve (E)'}" aria-label="${done ? 'Reopen' : 'Resolve'} comment ${n}">${done ? icon.undo : icon.check}</button>` : ''}
-          ${c.can_edit ? `<button type="button" data-act="trash" title="Move to Trash" aria-label="Move comment ${n} to Trash">${icon.trash}</button>` : ''}
+          ${canTrash(c) ? `<button type="button" data-act="trash" title="Move to Trash" aria-label="Move comment ${n} to Trash">${icon.trash}</button>` : ''}
         </span>
       </div>`;
   };
@@ -364,7 +366,7 @@
         <button type="button" class="bpsc-x bpsc-pane__back" data-act="close" aria-label="Close (Esc)">${icon.close}</button>
         <span class="bpsc-status${done ? ' is-done' : ''}">${done ? `${icon.check}Resolved` : 'Open'}</span>
         <span class="bpsc-sep"></span>
-        ${c.can_edit ? `<button type="button" class="bpsc-icon" data-act="trash" title="Move to Trash" aria-label="Move to Trash">${icon.trash}</button>` : ''}
+        ${canTrash(c) ? `<button type="button" class="bpsc-icon" data-act="trash" title="Move to Trash" aria-label="Move to Trash">${icon.trash}</button>` : ''}
         ${c.can_edit ? `<button type="button" class="bpsc-btn bpsc-btn--sm ${done ? '' : 'bpsc-btn--ok'}" data-act="status">${done ? `${icon.undo}Reopen` : `${icon.check}Resolve`}</button>` : ''}
       </header>
       <div class="bpsc-pane__scroll">
@@ -445,7 +447,7 @@
   };
 
   const trash = async (ids) => {
-    const targets = ids.map(find).filter((c) => c && c.can_edit);
+    const targets = ids.map(find).filter((c) => c && canTrash(c));
     if (!targets.length) return;
     state.focus = nextAfter(targets.map((c) => c.id)) || state.focus;
     if (targets.some((c) => c.id === state.active)) state.active = 0;

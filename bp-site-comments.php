@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.3.3
+ * Version:           1.4.0
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,7 +19,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.3.3' );
+define( 'BP_SC_VERSION', '1.4.0' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
 
@@ -67,6 +67,38 @@ function bp_sc_can_comment(): bool {
 /** Who can resolve, reopen or delete other people's comments. */
 function bp_sc_can_manage(): bool {
 	return current_user_can( apply_filters( 'bp_sc_manage_capability', 'edit_others_posts' ) );
+}
+
+/**
+ * Seconds the author has left to edit or delete their own comment (0 once the window has closed).
+ * 15 minutes by default; change with: add_filter( 'bp_sc_edit_window', fn() => 30 * MINUTE_IN_SECONDS );
+ */
+function bp_sc_edit_window(): int {
+	return max( 0, (int) apply_filters( 'bp_sc_edit_window', 15 * MINUTE_IN_SECONDS ) );
+}
+function bp_sc_edit_seconds_left( WP_Post $post ): int {
+	if ( (int) $post->post_author !== get_current_user_id() ) {
+		return 0;
+	}
+	return max( 0, (int) get_post_time( 'U', true, $post ) + bp_sc_edit_window() - time() );
+}
+/** "Comments can only be edited for 15 minutes after posting." */
+function bp_sc_edit_closed( string $verb ): WP_Error {
+	$minutes = (int) ceil( bp_sc_edit_window() / MINUTE_IN_SECONDS );
+	return new WP_Error(
+		'bp_sc_edit_closed',
+		'edit' === $verb
+			/* translators: %d: minutes */
+			? sprintf( _n( 'Comments can only be edited for %d minute after posting.', 'Comments can only be edited for %d minutes after posting.', $minutes, 'bp-site-comments' ), $minutes )
+			/* translators: %d: minutes */
+			: sprintf( _n( 'Comments can only be deleted for %d minute after posting.', 'Comments can only be deleted for %d minutes after posting.', $minutes, 'bp-site-comments' ), $minutes ),
+		array( 'status' => 403 )
+	);
+}
+
+/** The author may delete within the edit window; site managers may always delete (moderation). */
+function bp_sc_can_delete( WP_Post $post ): bool {
+	return bp_sc_edit_seconds_left( $post ) > 0 || bp_sc_can_manage();
 }
 
 /** A page's key: its path and query without tracking or comment params, so /menu/ and /menu/?utm=x match. */
@@ -142,6 +174,9 @@ function bp_sc_format( WP_Post $post ): array {
 		'page_title' => $meta( 'page_title' ),
 		'page_key'  => $meta( 'page_key' ) ?: bp_sc_page_key( $meta( 'page_url' ) ),
 		'can_edit'  => (int) $post->post_author === get_current_user_id() || bp_sc_can_manage(),
+		// Text can be changed by its author only, and only for a short while after posting.
+		'edit_left' => bp_sc_edit_seconds_left( $post ),
+		'can_delete' => bp_sc_can_delete( $post ),
 		'replies'   => is_array( $replies ) ? $replies : array(),
 	);
 }
@@ -236,7 +271,7 @@ add_action(
 			'/comments/(?P<id>\d+)',
 			array(
 				array(
-					// Edit text (author only), resolve / reopen (author or manager).
+					// Edit text (author, within the edit window), resolve / reopen (author or manager).
 					'methods'             => 'PATCH',
 					'permission_callback' => $auth,
 					'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
@@ -248,10 +283,13 @@ add_action(
 						if ( ! $mine && ! bp_sc_can_manage() ) {
 							return new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can change this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
 						}
+						if ( null !== $r['text'] && ! bp_sc_edit_seconds_left( $post ) ) {
+							return bp_sc_edit_closed( 'edit' );
+						}
 						if ( null !== $r['status'] ) {
 							update_post_meta( $post->ID, '_bp_sc_status', 'resolved' === $r['status'] ? 'resolved' : 'open' );
 						}
-						if ( null !== $r['text'] && $mine ) {
+						if ( null !== $r['text'] ) {
 							$text = bp_sc_clean_text( $r['text'] );
 							if ( '' !== $text ) {
 								wp_update_post( array( 'ID' => $post->ID ) + bp_sc_text_fields( $text ) );
@@ -268,8 +306,11 @@ add_action(
 						if ( ! $post ) {
 							return new WP_Error( 'bp_sc_missing', __( 'Comment not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
 						}
-						if ( (int) $post->post_author !== get_current_user_id() && ! bp_sc_can_manage() ) {
-							return new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can delete this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
+						if ( ! bp_sc_can_delete( $post ) ) {
+							$own = (int) $post->post_author === get_current_user_id();
+							return $own
+								? bp_sc_edit_closed( 'delete' )
+								: new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can delete this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
 						}
 						wp_trash_post( $post->ID ); // Recoverable from Site Comments › Trash.
 						return array( 'deleted' => true );

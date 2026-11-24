@@ -4,7 +4,7 @@ Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.0
-Stable tag: 1.3.3
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,10 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.4.0 =
+* Links stay usable in Comment mode: Ctrl + click (Cmd + click on Mac) or middle-click opens a link, and the comment box of a link has an "Open link" button (works on phones too).
+* Authors can edit or delete their own comment for 15 minutes after posting; a note shows the time left. After that only site managers can delete it, and nobody can change its text. The server enforces this too. Change the window with the bp_sc_edit_window filter.
 
 = 1.3.3 =
 * iPhone and iPad: tapping text, headings or boxes in Comment mode now opens the comment box (Safari sends no click for those taps).

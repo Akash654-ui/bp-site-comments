@@ -12,7 +12,8 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 - **Dashboard.** *Site Comments* in wp-admin is a three-pane review screen: views and pages on the left (with counts and progress), the comment list in the middle, and the selected conversation on the right. Resolve, reply and trash with a click or the keyboard (↑/↓, Enter, E, R, X, /), bulk actions, Undo, search and filters. *Review the site* opens the site with Comment mode on.
 - **Private.** Only logged-in users can see or use it. Visitors load nothing: no script, no styles, no requests.
 - **Works with any theme.** The interface runs inside its own Shadow DOM, so theme CSS cannot restyle or hide it and none of its styles leak into the site. Colours are built to stay readable on any background (light, dark, brand red or photos).
-- **Safe clicks.** While Comment mode is on, links and buttons don't fire, so nobody navigates away by accident.
+- **Safe clicks.** While Comment mode is on, links and buttons don't fire, so nobody navigates away by accident. To open a link anyway, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click it, middle-click it, or use **Open link** in its comment box (handy on phones).
+- **Fix your own mistakes.** Authors can edit or delete their own comment for 15 minutes after posting; a note shows the time left.
 - **Keyboard friendly.** <kbd>C</kbd> toggles Comment mode, <kbd>Enter</kbd> comments on the outlined element, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> posts, <kbd>Esc</kbd> closes.
 
 ## Requirements
@@ -40,8 +41,8 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 
 | Who | Can |
 | --- | --- |
-| Any logged-in user | Comment, reply, resolve or delete their own comments |
-| Editors and administrators (`edit_others_posts`) | Also resolve, reopen and delete anyone's comments, and see the dashboard list |
+| Any logged-in user | Comment, reply, and resolve or reopen their own comments. Edit or delete their own comment for 15 minutes after posting |
+| Editors and administrators (`edit_others_posts`) | Also resolve, reopen and delete anyone's comments at any time, and see the dashboard list. Nobody can change someone else's text |
 
 Change these with filters, for example in a small mu-plugin or your theme's `functions.php`:
 
@@ -51,6 +52,9 @@ add_filter( 'bp_sc_capability', fn() => 'edit_posts' );
 
 // Only administrators may resolve or delete other people's comments.
 add_filter( 'bp_sc_manage_capability', fn() => 'manage_options' );
+
+// Give authors 30 minutes to edit or delete their own comment (default 15).
+add_filter( 'bp_sc_edit_window', fn() => 30 * MINUTE_IN_SECONDS );
 ```
 
 ## Developer hooks
@@ -59,6 +63,7 @@ add_filter( 'bp_sc_manage_capability', fn() => 'manage_options' );
 | --- | --- | --- |
 | `bp_sc_capability` | filter | Capability needed to comment (default `read`) |
 | `bp_sc_manage_capability` | filter | Capability needed to manage others' comments (default `edit_others_posts`) |
+| `bp_sc_edit_window` | filter | Seconds an author may edit or delete their own comment after posting (default `15 * MINUTE_IN_SECONDS`) |
 | `bp_sc_comment_added` | action | After a comment is created; receives the comment ID |
 | `bp_sc_reply_added` | action | After a reply is added; receives the comment ID |
 
@@ -79,7 +84,7 @@ All routes need a logged-in user and the `wp_rest` nonce.
 | --- | --- | --- |
 | `GET` | `/wp-json/bp-site-comments/v1/comments?url=…` | Comments for a page |
 | `POST` | `/wp-json/bp-site-comments/v1/comments` | New comment (`text`, `url`, `selector`, `snippet`, `tag`, `title`) |
-| `PATCH` | `/wp-json/bp-site-comments/v1/comments/{id}` | Edit `text` (author) or set `status` to `open` / `resolved` |
+| `PATCH` | `/wp-json/bp-site-comments/v1/comments/{id}` | Edit `text` (author, within the edit window) or set `status` to `open` / `resolved` |
 | `DELETE` | `/wp-json/bp-site-comments/v1/comments/{id}` | Move a comment to the trash |
 | `POST` | `/wp-json/bp-site-comments/v1/comments/{id}/replies` | Add a reply (`text`) |
 

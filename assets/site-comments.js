@@ -148,6 +148,12 @@
     }
     return el;
   };
+  // The link an element is (or sits in), so it can still be opened while commenting.
+  const linkOf = (el) => {
+    const a = el?.closest?.('a[href]');
+    return a && !/^\s*javascript:/i.test(a.getAttribute('href')) ? a : null;
+  };
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   const visibleRect = (el) => {
     const r = el?.getBoundingClientRect();
     return r && (r.width || r.height) ? r : null;
@@ -186,6 +192,7 @@
     close: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     list: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>',
     check: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17l9-10"/></svg>',
+    open: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
     cursor: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l14 7-6 2-2 6z"/></svg>',
   };
 
@@ -196,7 +203,7 @@
     <button class="launch" type="button" aria-pressed="false" title="Comment mode (C)">${icon.chat}<span>Comment</span><span class="launch__count" hidden></span></button>
     <div class="bar" role="toolbar" aria-label="Comment mode" hidden>
       <span class="bar__mode"><span class="bar__live" aria-hidden="true"></span>Comment mode</span>
-      <span class="bar__hint">${icon.cursor}Click anything to leave a comment</span>
+      <span class="bar__hint">${icon.cursor}Click anything to leave a comment<span class="bar__keys"><kbd>${mac ? '⌘' : 'Ctrl'}</kbd>+ click opens a link</span></span>
       <span class="bar__sep" aria-hidden="true"></span>
       <button type="button" class="bar__chip" data-resolved aria-pressed="false" title="Show resolved comments on the page">${icon.check}Show resolved</button>
       <button type="button" class="bar__chip" data-panel aria-expanded="false">${icon.list}All comments<span class="bar__count" data-bar-count></span></button>
@@ -229,6 +236,12 @@
   };
 
   /* ---------------- state ---------------- */
+  // Authors can edit or delete their own comment for a short while after posting (15 minutes unless the
+  // site changes it). The server says how many seconds are left; the deadline is kept on this clock.
+  const stamp = (c) => Object.assign(c, { editUntil: Date.now() + (Number(c.edit_left) || 0) * 1000 });
+  const editable = (c) => c.mine && Date.now() < (c.editUntil || 0);
+  const deletable = (c) => editable(c) || !!cfg.manage;
+  const minutesLeft = (c) => Math.max(1, Math.ceil(((c.editUntil || 0) - Date.now()) / 60000));
   const visible = () => comments.filter((c) => showResolved || c.status !== 'resolved');
   const openCount = () => comments.filter((c) => c.status !== 'resolved').length;
 
@@ -244,7 +257,7 @@
 
   const load = async () => {
     lastLoad = Date.now();
-    try { comments = await api(`?url=${encodeURIComponent(pageUrl())}`); } catch (e) { /* keep what is shown */ }
+    try { comments = (await api(`?url=${encodeURIComponent(pageUrl())}`)).map(stamp); } catch (e) { /* keep what is shown */ }
     elCache.clear();
     updateCounts(); renderPins(); renderPanel();
   };
@@ -319,8 +332,10 @@
 
   // In comment mode a click comments instead of following links or pressing buttons.
   // Touch is left alone (blocking touchstart would stop scrolling and taps on phones).
+  // Ctrl / Cmd + click and middle-click open a link as usual, so reviewers can still move around the site.
+  const opensLink = (e) => (e.ctrlKey || e.metaKey || e.button === 1) && !!linkOf(e.target);
   const swallow = (e) => {
-    if (!on || fromUs(e) || e.pointerType === 'touch') return;
+    if (!on || fromUs(e) || e.pointerType === 'touch' || opensLink(e)) return;
     e.preventDefault();
     e.stopPropagation();
   };
@@ -350,7 +365,7 @@
     commentAt(e.target);
   }, { capture: true, passive: true });
   doc.addEventListener('click', (e) => {
-    if (!on || fromUs(e)) return;
+    if (!on || fromUs(e) || opensLink(e)) return;
     e.preventDefault();
     e.stopPropagation();
     // The click some browsers still send after a tap was already handled above.
@@ -418,7 +433,12 @@
     return pop;
   };
 
-  const targetHead = (k, snippet) => `<div class="pop__target"><span class="chip">${esc(k)}</span>${snippet ? `<span class="pop__snippet">${esc(snippet.slice(0, 90))}${snippet.length > 90 ? '…' : ''}</span>` : ''}</div>`;
+  // Commenting on a link must not make it a dead end: the box offers to open it (the only way on a phone).
+  const openLink = (el) => {
+    const a = linkOf(el);
+    return a ? `<a class="open-link" data-open-link href="${esc(a.href)}"${a.target === '_blank' || !/^https?:/i.test(a.href) ? ' target="_blank" rel="noopener"' : ''}>Open link${icon.open}</a>` : '';
+  };
+  const targetHead = (k, snippet, el) => `<div class="pop__target"><span class="pop__kind"><span class="chip">${esc(k)}</span>${el ? openLink(el) : ''}</span>${snippet ? `<span class="pop__snippet">${esc(snippet.slice(0, 90))}${snippet.length > 90 ? '…' : ''}</span>` : ''}</div>`;
   const avatar = (name, url) => `<span class="avatar" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" width="28" height="28" loading="lazy">` : ''}</span>`;
   const submitOnCtrlEnter = (ta, btn) => {
     ta.addEventListener('input', () => { btn.disabled = !ta.value.trim(); });
@@ -430,7 +450,7 @@
     const snippet = snippetFor(el);
     const wider = el.parentElement && el.parentElement !== doc.body && el.parentElement !== root;
     const pop = popover(el, `
-      ${targetHead(kind(el), snippet)}
+      ${targetHead(kind(el), snippet, el)}
       ${wider || inner.length ? `<div class="pop__scope">${inner.length ? '<button type="button" class="scope-btn" data-narrow>&minus; Smaller area</button>' : ''}${wider ? '<button type="button" class="scope-btn" data-wider>+ Bigger area</button>' : ''}</div>` : ''}
       <textarea class="input" rows="3" aria-label="Your comment" placeholder="What should change here?"></textarea>
       <div class="pop__foot">
@@ -457,10 +477,10 @@
     save.addEventListener('click', async () => {
       save.disabled = true; save.textContent = 'Posting…';
       try {
-        const c = await api('', { method: 'POST', body: { text: ta.value, url: pageUrl(), selector: selectorFor(el), snippet, tag: el.tagName.toLowerCase(), title: doc.title } });
+        const c = stamp(await api('', { method: 'POST', body: { text: ta.value, url: pageUrl(), selector: selectorFor(el), snippet, tag: el.tagName.toLowerCase(), title: doc.title } }));
         comments.push(c);
         closePopover(); updateCounts(); renderPins(); renderPanel();
-        say('Comment posted');
+        say(editable(c) ? `Comment posted · you can edit it for ${minutesLeft(c)} minutes` : 'Comment posted');
       } catch (err) {
         say(err.message, true); save.disabled = false; save.textContent = 'Post';
       }
@@ -470,21 +490,23 @@
   const thread = (c) => {
     const el = findEl(c);
     const n = comments.indexOf(c) + 1;
-    const canChange = c.mine || cfg.manage;
-    const msg = (r, editable = false) => `<li class="msg">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${editable ? '<button type="button" class="link-btn" data-edit>Edit</button>' : ''}</p><p class="msg__text">${nl2br(r.text)}</p></div></li>`;
+    const canResolve = c.mine || cfg.manage;
+    const canEdit = editable(c);
+    const windowNote = () => (editable(c) ? `<p class="msg__window" data-window>You can edit or delete this for ${minutesLeft(c)} more minute${minutesLeft(c) === 1 ? '' : 's'}</p>` : '');
+    const msg = (r, own = false) => `<li class="msg">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${own ? '<button type="button" class="link-btn" data-edit>Edit</button>' : ''}</p><p class="msg__text">${nl2br(r.text)}</p>${own ? windowNote() : ''}</div></li>`;
     const pop = popover(el, `
       <div class="pop__head">
         <span class="num">${c.status === 'resolved' ? icon.check : n}</span>
-        ${targetHead(el ? kind(el) : 'Removed', c.snippet)}
+        ${targetHead(el ? kind(el) : 'Removed', c.snippet, el)}
         <button type="button" class="icon-btn" data-close aria-label="Close">${icon.close}</button>
       </div>
       ${!el ? '<p class="note">This part of the page has changed since the comment was left.</p>' : ''}
-      <ol class="thread">${msg(c, c.mine)}${c.replies.map((x) => msg(x)).join('')}</ol>
+      <ol class="thread">${msg(c, canEdit)}${c.replies.map((x) => msg(x)).join('')}</ol>
       <textarea class="input input--reply" rows="2" aria-label="Reply" placeholder="Reply…"></textarea>
       <div class="pop__foot">
-        <span class="pop__actions">${canChange ? '<button type="button" class="btn btn--ghost btn--danger" data-delete>Delete</button>' : ''}</span>
+        <span class="pop__actions">${deletable(c) ? '<button type="button" class="btn btn--ghost btn--danger" data-delete>Delete</button>' : ''}</span>
         <span class="pop__actions">
-          ${canChange ? `<button type="button" class="btn btn--ghost" data-status>${c.status === 'resolved' ? 'Reopen' : `${icon.check}Resolve`}</button>` : ''}
+          ${canResolve ? `<button type="button" class="btn btn--ghost" data-status>${c.status === 'resolved' ? 'Reopen' : `${icon.check}Resolve`}</button>` : ''}
           <button type="button" class="btn" data-reply disabled>Reply</button>
         </span>
       </div>`, c.status === 'resolved' ? 'is-resolved' : '');
@@ -495,7 +517,17 @@
     submitOnCtrlEnter(ta, send);
     pop.querySelector('[data-close]').addEventListener('click', closePopover);
 
-    const replace = (fresh) => { comments[comments.indexOf(c)] = fresh; updateCounts(); renderPins(); renderPanel(); return fresh; };
+    const replace = (fresh) => { comments[comments.indexOf(c)] = stamp(fresh); updateCounts(); renderPins(); renderPanel(); return fresh; };
+    // The countdown under your own comment; when time is up, Edit and Delete go away
+    // (unless something is being typed, which the server would then turn down with a message).
+    if (canEdit) {
+      const tick = setInterval(() => {
+        if (!pop.isConnected) { clearInterval(tick); return; }
+        if (editable(c)) { const w = pop.querySelector('[data-window]'); if (w) w.outerHTML = windowNote(); return; }
+        clearInterval(tick);
+        if (!pop.querySelector('.edit') && !ta.value.trim()) thread(c);
+      }, 15000);
+    }
     pop.querySelector('[data-edit]')?.addEventListener('click', (e) => {
       const body = e.currentTarget.closest('.msg').querySelector('.msg__text');
       body.outerHTML = '<div class="edit"><textarea class="input input--reply" aria-label="Edit your comment"></textarea><div class="pop__actions"><button type="button" class="btn btn--ghost" data-edit-cancel>Cancel</button><button type="button" class="btn" data-edit-save>Save</button></div></div>';
@@ -525,7 +557,7 @@
     });
     pop.querySelector('[data-delete]')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
-      if (!btn.dataset.sure) { btn.dataset.sure = '1'; btn.textContent = 'Delete for good?'; return; }
+      if (!btn.dataset.sure) { btn.dataset.sure = '1'; btn.textContent = 'Delete this comment?'; return; }
       try {
         await api(`/${c.id}`, { method: 'DELETE' });
         comments = comments.filter((x) => x !== c);
