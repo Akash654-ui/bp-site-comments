@@ -2,9 +2,9 @@
 Contributors: bornpixel
 Tags: feedback, review, comments, client, annotation
 Requires at least: 6.5
-Tested up to: 6.8
+Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.4.2
+Stable tag: 1.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,24 @@ No. Nothing is loaded for logged-out visitors.
 They are removed. Add define( 'BP_SC_KEEP_DATA', true ); to wp-config.php to keep them.
 
 == Changelog ==
+
+= 1.5.0 =
+* The "Bigger area" and "Smaller area" buttons are gone from the comment box, so it stays simple. The Up and Down keys still widen or narrow the outlined element before you click.
+* Translation ready: everything on the page and in the dashboard can now be translated (a translation template is included in the languages folder).
+* Backslashes in comments are kept: "C:\Users\name" was saved as "C:Usersname".
+* Two people replying to the same comment at the same moment no longer lose one of the replies.
+* Turning Comment mode off (Done, the admin bar or the C key) no longer throws away a comment you are typing. Esc still discards it on purpose.
+* Comment mode no longer appears inside page-builder previews and other framed pages, and the C key is ignored in every kind of text editor on the page.
+* Comments in the Trash can no longer be replied to, resolved or edited. Restore them first.
+* An author can no longer bring back a comment that a site manager deleted. Undo still works for your own comment within the edit window.
+* Comments are only accepted for pages of this site, so dashboard links never lead to another website.
+* Saving an edit with empty text now shows a message instead of doing nothing.
+* Dashboard: your reply's Delete button goes away when its time is up; the person filter tells apart people with the same name; if one comment in a bulk Resolve, Reopen or Trash fails, the others still show their new state.
+* "All comments across the site" in the page list only shows for people who can open the dashboard.
+* The comment box shows Cmd + Enter on Mac. The dashboard shows the real edit window instead of always "15 minutes".
+* The list of comments on the page no longer overlaps the admin bar on phones.
+* Deleting the plugin now also removes comments that were in the Trash, on every site of a network.
+* Removed old code for the previous comment list, and settings the scripts no longer used.
 
 = 1.4.2 =
 * The Delete button at the bottom of a comment is back: it removes the whole comment with its replies (site managers any time, the author for 15 minutes).

@@ -9,6 +9,12 @@
    * Everything goes through the plugin's REST API; filters are kept in the address bar.
    */
   const cfg = window.bpScDashboard;
+  // WordPress's translation functions (wp-i18n); plain English if they are missing for any reason.
+  const { __, _n, sprintf } = window.wp?.i18n || {
+    __: (s) => s,
+    _n: (one, many, n) => (n === 1 ? one : many),
+    sprintf: (f, ...a) => { let i = 0; return f.replace(/%(%|(\d+)\$[sd]|[sd])/g, (m, x, p) => (x === '%' ? '%' : String(a[p ? p - 1 : i++]))); },
+  };
   const app = document.getElementById('bpsc-app');
   if (!cfg || !app) return;
 
@@ -23,26 +29,43 @@
     const href = url.includes('@') && !/^https?:/i.test(url) ? `mailto:${url}` : (/^www\./i.test(url) ? `https://${url}` : url);
     return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer nofollow">${esc(url)}</a>${esc(tail)}`;
   }).join('');
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   const initials = (n) => String(n || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const fullDate = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   const age = (iso) => {
     const s = (Date.now() - new Date(iso)) / 1000;
-    if (s < 60) return 'now';
-    if (s < 3600) return `${Math.floor(s / 60)}m`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h`;
-    if (s < 86400 * 7) return `${Math.floor(s / 86400)}d`;
-    if (s < 86400 * 30) return `${Math.floor(s / (86400 * 7))}w`;
+    // Short forms for the list: "now", "5m", "3h", "2d", "1w".
+    if (s < 60) return __('now', 'bp-site-comments');
+    /* translators: %d: minutes, shown short in the comment list, e.g. "5m". */
+    if (s < 3600) return sprintf(__('%dm', 'bp-site-comments'), Math.floor(s / 60));
+    /* translators: %d: hours, shown short, e.g. "3h". */
+    if (s < 86400) return sprintf(__('%dh', 'bp-site-comments'), Math.floor(s / 3600));
+    /* translators: %d: days, shown short, e.g. "2d". */
+    if (s < 86400 * 7) return sprintf(__('%dd', 'bp-site-comments'), Math.floor(s / 86400));
+    /* translators: %d: weeks, shown short, e.g. "1w". */
+    if (s < 86400 * 30) return sprintf(__('%dw', 'bp-site-comments'), Math.floor(s / (86400 * 7)));
     return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   };
   const ago = (iso) => {
-    let v = Math.max(1, (Date.now() - new Date(iso)) / 1000);
-    for (const [n, unit] of [[60, 'second'], [60, 'minute'], [24, 'hour'], [7, 'day'], [4.35, 'week'], [12, 'month'], [Infinity, 'year']]) {
-      if (v < n) { v = Math.floor(v); return unit === 'second' ? 'just now' : `${v} ${unit}${v === 1 ? '' : 's'} ago`; }
-      v /= n;
-    }
-    return '';
+    const s = Math.max(1, (Date.now() - new Date(iso)) / 1000);
+    const n = (unit) => Math.floor(s / unit);
+    if (s < 60) return __('just now', 'bp-site-comments');
+    /* translators: %d: number of minutes. */
+    if (s < 3600) return sprintf(_n('%d minute ago', '%d minutes ago', n(60), 'bp-site-comments'), n(60));
+    /* translators: %d: number of hours. */
+    if (s < 86400) return sprintf(_n('%d hour ago', '%d hours ago', n(3600), 'bp-site-comments'), n(3600));
+    /* translators: %d: number of days. */
+    if (s < 604800) return sprintf(_n('%d day ago', '%d days ago', n(86400), 'bp-site-comments'), n(86400));
+    /* translators: %d: number of weeks. */
+    if (s < 2630880) return sprintf(_n('%d week ago', '%d weeks ago', n(604800), 'bp-site-comments'), n(604800));
+    /* translators: %d: number of months. */
+    if (s < 31570560) return sprintf(_n('%d month ago', '%d months ago', n(2630880), 'bp-site-comments'), n(2630880));
+    /* translators: %d: number of years. */
+    return sprintf(_n('%d year ago', '%d years ago', n(31570560), 'bp-site-comments'), n(31570560));
   };
+  // "3 comments": a count with its noun, in the site's language.
+  /* translators: %d: number of comments. */
+  const nComments = (n) => sprintf(_n('%d comment', '%d comments', n, 'bp-site-comments'), n);
   const api = async (path = '', opts = {}) => {
     const res = await fetch(cfg.api + path, {
       method: opts.method || 'GET',
@@ -52,21 +75,30 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      if (data.code === 'rest_cookie_invalid_nonce') throw new Error('Your session has expired. Reload the page and try again.');
-      throw new Error(data.message || 'Something went wrong. Please try again.');
+      if (data.code === 'rest_cookie_invalid_nonce') throw new Error(__('Your session has expired. Reload the page and try again.', 'bp-site-comments'));
+      throw Object.assign(new Error(data.message || __('Something went wrong. Please try again.', 'bp-site-comments')), { status: res.status });
     }
     return data;
   };
   const withParam = (url, key, value) => { try { const u = new URL(url); u.searchParams.set(key, value); return u.toString(); } catch (e) { return url; } };
   const kind = (tag) => {
     const t = String(tag || '').toLowerCase();
-    if (/^h[1-6]$/.test(t)) return 'Heading';
-    return ({ img: 'Image', picture: 'Image', figure: 'Image', video: 'Video', iframe: 'Embed', p: 'Paragraph', a: 'Link', button: 'Button', li: 'List item', ul: 'List', ol: 'List', section: 'Section', summary: 'Question', details: 'Question', table: 'Table', td: 'Cell', th: 'Cell', blockquote: 'Quote', figcaption: 'Caption', header: 'Header', footer: 'Footer', nav: 'Menu', form: 'Form', input: 'Field', textarea: 'Field', select: 'Field', label: 'Field', svg: 'Icon', span: 'Text', b: 'Text', strong: 'Text', em: 'Text' })[t] || 'Box';
+    if (/^h[1-6]$/.test(t)) return __('Heading', 'bp-site-comments');
+    const image = __('Image', 'bp-site-comments'), list = __('List', 'bp-site-comments'), question = __('Question', 'bp-site-comments');
+    const cell = __('Cell', 'bp-site-comments'), field = __('Field', 'bp-site-comments'), text = __('Text', 'bp-site-comments');
+    return ({
+      img: image, picture: image, figure: image, video: __('Video', 'bp-site-comments'), iframe: __('Embed', 'bp-site-comments'),
+      p: __('Paragraph', 'bp-site-comments'), a: __('Link', 'bp-site-comments'), button: __('Button', 'bp-site-comments'),
+      li: __('List item', 'bp-site-comments'), ul: list, ol: list, section: __('Section', 'bp-site-comments'), summary: question, details: question,
+      table: __('Table', 'bp-site-comments'), td: cell, th: cell, blockquote: __('Quote', 'bp-site-comments'), figcaption: __('Caption', 'bp-site-comments'),
+      header: __('Header', 'bp-site-comments'), footer: __('Footer', 'bp-site-comments'), nav: __('Menu', 'bp-site-comments'), form: __('Form', 'bp-site-comments'),
+      input: field, textarea: field, select: field, label: field, svg: __('Icon', 'bp-site-comments'), span: text, b: text, strong: text, em: text,
+    })[t] || __('Box', 'bp-site-comments');
   };
   // "About us | Zyraa Kitchens" -> "About us": the site name repeats on every page. The front page is "Home".
   const siteName = String(cfg.site || '').trim().toLowerCase();
   const pageName = (c) => {
-    if (c.page_key === '/') return 'Home';
+    if (c.page_key === '/') return __('Home', 'bp-site-comments');
     const parts = String(c.page_title || '').split(/\s[|–—-]\s/).map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== siteName);
     return parts[0] || c.page_key || '/';
   };
@@ -167,9 +199,16 @@
     return numberCache.get(c.id);
   };
   const find = (id) => state.comments.find((c) => c.id === id);
+  // The server says how many seconds each of your replies can still be deleted; keep that deadline on
+  // this computer's clock, so a wrong clock does not matter and the Delete button goes away on time.
+  const stamp = (c) => { (c.replies || []).forEach((r) => { r.delUntil = Date.now() + (Number(r.edit_left) || 0) * 1000; }); return c; };
+  const canDelReply = (r) => r.mine && r.id && Date.now() < (r.delUntil || 0);
   // Authors can delete their own comment only for a short while after posting; managers always can.
-  const canTrash = (c) => (c.can_delete ?? c.can_edit);
+  const canTrash = (c) => !!c.can_delete;
   const inStatus = (c) => state.status === 'all' || c.status === state.status;
+
+  // People are told apart by user ID (two people can share a name). Old links with a name still work.
+  const personKey = (c) => (c.author_id ? String(c.author_id) : c.author);
 
   const filtered = () => {
     const q = state.q.trim().toLowerCase();
@@ -177,7 +216,7 @@
     return state.comments.filter((c) =>
       inStatus(c) &&
       (!state.page || c.page_key === state.page) &&
-      (!state.person || c.author === state.person) &&
+      (!state.person || personKey(c) === state.person) &&
       (!q || [c.text, c.snippet, c.author, pageName(c), ...c.replies.map((r) => r.text)].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => dir * (new Date(a.date) - new Date(b.date)));
   };
@@ -186,21 +225,21 @@
   app.insertAdjacentHTML('beforeend', `
     <header class="bpsc-header">
       <div>
-        <h2>Site Comments</h2>
-        <p>Feedback from your team, pinned to the live site.</p>
+        <h2>${esc(__('Site Comments', 'bp-site-comments'))}</h2>
+        <p>${esc(__('Feedback from your team, pinned to the live site.', 'bp-site-comments'))}</p>
       </div>
       <div class="bpsc-header__actions">
-        <a class="bpsc-btn bpsc-btn--quiet" href="${esc(cfg.trashUrl)}" data-trash>${icon.trash}<span>Trash</span></a>
-        <a class="bpsc-btn bpsc-btn--dark" href="${esc(withParam(cfg.home, 'bp-comments', '1'))}" target="_blank" rel="noopener">${icon.cursor}<span>Review the site</span></a>
+        <a class="bpsc-btn bpsc-btn--quiet" href="${esc(cfg.trashUrl)}" data-trash>${icon.trash}<span>${esc(__('Trash', 'bp-site-comments'))}</span></a>
+        <a class="bpsc-btn bpsc-btn--dark" href="${esc(withParam(cfg.home, 'bp-comments', '1'))}" target="_blank" rel="noopener">${icon.cursor}<span>${esc(__('Review the site', 'bp-site-comments'))}</span></a>
       </div>
     </header>
     <div class="bpsc-shell" data-shell>
-      <nav class="bpsc-rail" data-rail aria-label="Filter comments"></nav>
-      <section class="bpsc-main" aria-label="Comments">
+      <nav class="bpsc-rail" data-rail aria-label="${esc(__('Filter comments', 'bp-site-comments'))}"></nav>
+      <section class="bpsc-main" aria-label="${esc(__('Comments', 'bp-site-comments'))}">
         <div class="bpsc-main__bar" data-bar></div>
-        <div class="bpsc-list" data-list role="listbox" aria-label="Comments" aria-live="polite"></div>
+        <div class="bpsc-list" data-list role="listbox" aria-label="${esc(__('Comments', 'bp-site-comments'))}" aria-live="polite"></div>
       </section>
-      <aside class="bpsc-pane" data-pane aria-label="Conversation"></aside>
+      <aside class="bpsc-pane" data-pane aria-label="${esc(__('Conversation', 'bp-site-comments'))}"></aside>
     </div>
     <div class="bpsc-toast" data-toast role="status" aria-live="polite" hidden></div>`);
   const $ = (s) => app.querySelector(s);
@@ -216,7 +255,8 @@
     badge.className = `awaiting-mod count-${open}`;
     badge.firstElementChild.textContent = open;
   };
-  const renderTrash = () => { $('[data-trash] span').textContent = state.trash ? `Trash · ${state.trash}` : 'Trash'; };
+  const renderTrash = () => { /* translators: %d: number of comments in the Trash. */
+    $('[data-trash] span').textContent = state.trash ? sprintf(__('Trash · %d', 'bp-site-comments'), state.trash) : __('Trash', 'bp-site-comments'); };
 
   const renderRail = () => {
     const rail = $('[data-rail]');
@@ -232,15 +272,15 @@
     }, new Map()).values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
     const ring = 2 * Math.PI * 22;
     rail.innerHTML = `
-      <p class="bpsc-rail__label">Views</p>
-      ${[['open', 'Open', icon.inbox], ['resolved', 'Resolved', icon.check], ['all', 'All comments', icon.stack]].map(([k, label, ic]) => `
-        <button type="button" class="bpsc-rail__item${state.status === k ? ' is-on' : ''} bpsc-rail__item--${k}" data-status="${k}" aria-pressed="${state.status === k}">${ic}<span>${label}</span><b>${count(k)}</b></button>`).join('')}
-      <p class="bpsc-rail__label">Pages</p>
-      <button type="button" class="bpsc-rail__item${state.page ? '' : ' is-on'}" data-page="" aria-pressed="${!state.page}">${icon.page}<span>All pages</span></button>
+      <p class="bpsc-rail__label">${esc(__('Views', 'bp-site-comments'))}</p>
+      ${[['open', __('Open', 'bp-site-comments'), icon.inbox], ['resolved', __('Resolved', 'bp-site-comments'), icon.check], ['all', __('All comments', 'bp-site-comments'), icon.stack]].map(([k, label, ic]) => `
+        <button type="button" class="bpsc-rail__item${state.status === k ? ' is-on' : ''} bpsc-rail__item--${k}" data-status="${k}" aria-pressed="${state.status === k}">${ic}<span>${esc(label)}</span><b>${count(k)}</b></button>`).join('')}
+      <p class="bpsc-rail__label">${esc(__('Pages', 'bp-site-comments'))}</p>
+      <button type="button" class="bpsc-rail__item${state.page ? '' : ' is-on'}" data-page="" aria-pressed="${!state.page}">${icon.page}<span>${esc(__('All pages', 'bp-site-comments'))}</span></button>
       ${pages.map((p) => `<button type="button" class="bpsc-rail__item${state.page === p.key ? ' is-on' : ''}" data-page="${esc(p.key)}" aria-pressed="${state.page === p.key}" title="${esc(p.key)}">${icon.page}<span>${esc(p.name)}</span>${p.n ? `<b>${p.n}</b>` : ''}</button>`).join('')}
       <div class="bpsc-progress">
         <svg viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="22" fill="none" stroke="#e7e9ec" stroke-width="5"/><circle cx="26" cy="26" r="22" fill="none" stroke="#008a20" stroke-width="5" stroke-linecap="round" stroke-dasharray="${ring}" stroke-dashoffset="${ring * (1 - pct / 100)}" transform="rotate(-90 26 26)"/></svg>
-        <div><b>${pct}% resolved</b><span>${open ? `${plural(open, 'comment', 'comments')} to go` : 'All done'}</span></div>
+        <div><b>${esc(sprintf(__('%d%% resolved', 'bp-site-comments'), pct))}</b><span>${esc(open ? sprintf(_n('%d comment to go', '%d comments to go', open, 'bp-site-comments'), open) : __('All done', 'bp-site-comments'))}</span></div>
       </div>`;
   };
 
@@ -249,36 +289,41 @@
     const sel = [...state.selected].filter(find);
     const visible = filtered().length;
     // One checkbox selects every comment in the current view; it shows a dash while only some are.
-    const selectAll = `<label class="bpsc-selall" title="${sel.length ? 'Select none' : 'Select all'} (Ctrl+A)"><input type="checkbox" data-select-all${sel.length && sel.length >= visible ? ' checked' : ''} aria-label="Select all ${visible} comments"></label>`;
+    const selectAll = `<label class="bpsc-selall" title="${esc(sel.length ? __('Select none (Ctrl+A)', 'bp-site-comments') : __('Select all (Ctrl+A)', 'bp-site-comments'))}"><input type="checkbox" data-select-all${sel.length && sel.length >= visible ? ' checked' : ''} aria-label="${esc(sprintf(_n('Select all %d comment', 'Select all %d comments', visible, 'bp-site-comments'), visible))}"></label>`;
     if (sel.length) {
       bar.innerHTML = `
         <div class="bpsc-bulk">
           ${selectAll}
-          <b>${sel.length} selected</b>
-          ${sel.length < visible ? `<button type="button" class="bpsc-link" data-bulk="all">Select all ${visible}</button>` : ''}
+          <b>${esc(sprintf(__('%d selected', 'bp-site-comments'), sel.length))}</b>
+          ${sel.length < visible ? `<button type="button" class="bpsc-link" data-bulk="all">${esc(sprintf(__('Select all %d', 'bp-site-comments'), visible))}</button>` : ''}
           <span class="bpsc-sep"></span>
-          <button type="button" class="bpsc-btn bpsc-btn--ok bpsc-btn--sm" data-bulk="resolved">${icon.check}Resolve</button>
-          <button type="button" class="bpsc-btn bpsc-btn--sm" data-bulk="open">${icon.undo}Reopen</button>
-          <button type="button" class="bpsc-btn bpsc-btn--sm bpsc-btn--danger" data-bulk="trash" aria-label="Move to Trash">${icon.trash}</button>
-          <button type="button" class="bpsc-x" data-bulk="clear" title="Clear selection (Esc)" aria-label="Clear selection">${icon.close}</button>
+          <button type="button" class="bpsc-btn bpsc-btn--ok bpsc-btn--sm" data-bulk="resolved">${icon.check}${esc(__('Resolve', 'bp-site-comments'))}</button>
+          <button type="button" class="bpsc-btn bpsc-btn--sm" data-bulk="open">${icon.undo}${esc(__('Reopen', 'bp-site-comments'))}</button>
+          <button type="button" class="bpsc-btn bpsc-btn--sm bpsc-btn--danger" data-bulk="trash" aria-label="${esc(__('Move to Trash', 'bp-site-comments'))}">${icon.trash}</button>
+          <button type="button" class="bpsc-x" data-bulk="clear" title="${esc(__('Clear selection (Esc)', 'bp-site-comments'))}" aria-label="${esc(__('Clear selection', 'bp-site-comments'))}">${icon.close}</button>
         </div>`;
       bar.querySelector('[data-select-all]').indeterminate = sel.length < visible;
       return;
     }
-    const people = [...new Set(state.comments.map((c) => c.author))].sort();
+    const people = [...new Map(state.comments.map((c) => [personKey(c), c.author])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    const sameName = (name) => people.filter(([, n]) => n === name).length > 1;
+    if (state.person && !people.some(([k]) => k === state.person)) {
+      const byName = people.find(([, n]) => n === state.person);   // An old ?who=Name link.
+      if (byName) state.person = byName[0];
+    }
     const typing = document.activeElement?.matches?.('[data-q]');
-    const view = { open: 'Open', resolved: 'Resolved', all: 'All comments' }[state.status];
+    const view = { open: __('Open', 'bp-site-comments'), resolved: __('Resolved', 'bp-site-comments'), all: __('All comments', 'bp-site-comments') }[state.status];
     const pageLabel = state.page ? pageName(state.comments.find((c) => c.page_key === state.page) || { page_key: state.page }) : '';
     bar.innerHTML = `
       <div class="bpsc-title-row">
         ${visible ? selectAll : ''}
-        <h3>${view}${pageLabel ? `<span> · ${esc(pageLabel)}</span>` : ''}</h3>
-        <span class="bpsc-count">${plural(filtered().length, 'comment', 'comments')}</span>
+        <h3>${esc(view)}${pageLabel ? `<span> · ${esc(pageLabel)}</span>` : ''}</h3>
+        <span class="bpsc-count">${esc(nComments(filtered().length))}</span>
       </div>
       <div class="bpsc-filters">
-        <label class="bpsc-search">${icon.search}<span class="screen-reader-text">Search comments</span><input type="search" data-q placeholder="Search" value="${esc(state.q)}"><kbd>/</kbd></label>
-        <select data-person aria-label="Person"><option value="">Everyone</option>${people.map((pp) => `<option${state.person === pp ? ' selected' : ''}>${esc(pp)}</option>`).join('')}</select>
-        <select data-sort aria-label="Sort"><option value="new"${state.sort === 'new' ? ' selected' : ''}>Newest</option><option value="old"${state.sort === 'old' ? ' selected' : ''}>Oldest</option></select>
+        <label class="bpsc-search">${icon.search}<span class="screen-reader-text">${esc(__('Search comments', 'bp-site-comments'))}</span><input type="search" data-q placeholder="${esc(__('Search', 'bp-site-comments'))}" value="${esc(state.q)}"><kbd>/</kbd></label>
+        <select data-person aria-label="${esc(__('Person', 'bp-site-comments'))}"><option value="">${esc(__('Everyone', 'bp-site-comments'))}</option>${people.map(([k, name]) => `<option value="${esc(k)}"${state.person === k ? ' selected' : ''}>${esc(sameName(name) ? `${name} (#${k})` : name)}</option>`).join('')}</select>
+        <select data-sort aria-label="${esc(__('Sort', 'bp-site-comments'))}"><option value="new"${state.sort === 'new' ? ' selected' : ''}>${esc(__('Newest', 'bp-site-comments'))}</option><option value="old"${state.sort === 'old' ? ' selected' : ''}>${esc(__('Oldest', 'bp-site-comments'))}</option></select>
       </div>`;
     if (typing) { const q = bar.querySelector('[data-q]'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   };
@@ -291,21 +336,21 @@
       <div class="bpsc-row${done ? ' is-done' : ''}${sel ? ' is-selected' : ''}${state.active === c.id ? ' is-active' : ''}" role="option" aria-selected="${state.active === c.id}" data-id="${c.id}" tabindex="${state.focus === c.id ? 0 : -1}">
         <span class="bpsc-row__lead" data-stop>
           ${avatar(c.author, c.avatar)}
-          <input type="checkbox" data-select${sel ? ' checked' : ''} aria-label="Select comment ${n}">
+          <input type="checkbox" data-select${sel ? ' checked' : ''} aria-label="${esc(sprintf(__('Select comment %d', 'bp-site-comments'), n))}">
         </span>
         <span class="bpsc-row__body">
           <span class="bpsc-row__top"><span class="bpsc-row__text">${esc(c.text)}</span><time datetime="${esc(c.date)}" title="${esc(fullDate(c.date))}">${age(c.date)}</time></span>
           <span class="bpsc-row__meta">
-            <span class="bpsc-pin${done ? ' is-done' : ''}" title="Pin ${n} on the page">${done ? icon.check : n}</span>
+            <span class="bpsc-pin${done ? ' is-done' : ''}" title="${esc(sprintf(__('Pin %d on the page', 'bp-site-comments'), n))}">${done ? icon.check : n}</span>
             <span class="bpsc-row__who">${esc(c.author)}</span>
             ${state.page ? '' : `<span class="bpsc-dot bpsc-dot--page"></span><span class="bpsc-row__page">${esc(pageName(c))}</span>`}
-            <span class="bpsc-dot"></span><span class="bpsc-row__on">${kind(c.tag)}${c.snippet ? `: ${esc(c.snippet)}` : ''}</span>
+            <span class="bpsc-dot"></span><span class="bpsc-row__on">${esc(kind(c.tag))}${c.snippet ? `: ${esc(c.snippet)}` : ''}</span>
             ${c.replies.length ? `<span class="bpsc-row__replies">${icon.reply}${c.replies.length}</span>` : ''}
           </span>
         </span>
         <span class="bpsc-row__acts" data-stop>
-          ${c.can_edit ? `<button type="button" data-act="status" title="${done ? 'Reopen (E)' : 'Resolve (E)'}" aria-label="${done ? 'Reopen' : 'Resolve'} comment ${n}">${done ? icon.undo : icon.check}</button>` : ''}
-          ${canTrash(c) ? `<button type="button" data-act="trash" title="Move to Trash" aria-label="Move comment ${n} to Trash">${icon.trash}</button>` : ''}
+          ${c.can_edit ? `<button type="button" data-act="status" title="${esc(done ? __('Reopen (E)', 'bp-site-comments') : __('Resolve (E)', 'bp-site-comments'))}" aria-label="${esc(sprintf(done ? __('Reopen comment %d', 'bp-site-comments') : __('Resolve comment %d', 'bp-site-comments'), n))}">${done ? icon.undo : icon.check}</button>` : ''}
+          ${canTrash(c) ? `<button type="button" data-act="trash" title="${esc(__('Move to Trash', 'bp-site-comments'))}" aria-label="${esc(sprintf(__('Move comment %d to Trash', 'bp-site-comments'), n))}">${icon.trash}</button>` : ''}
         </span>
       </div>`;
   };
@@ -315,19 +360,19 @@
       return `
         <div class="bpsc-empty bpsc-empty--start">
           ${art.start}
-          <h3>No feedback yet</h3>
-          <p>Open the site while logged in, turn on <b>Comment mode</b>, then click any heading, image or section and type. Everything your team leaves shows up here.</p>
-          <ol class="bpsc-steps"><li><span>1</span>Open the site</li><li><span>2</span>Press <kbd>C</kbd> or click Comment</li><li><span>3</span>Click anything and type</li></ol>
-          <a class="bpsc-btn bpsc-btn--dark" href="${esc(withParam(cfg.home, 'bp-comments', '1'))}" target="_blank" rel="noopener">${icon.cursor}<span>Start reviewing</span></a>
+          <h3>${esc(__('No feedback yet', 'bp-site-comments'))}</h3>
+          <p>${esc(__('Open the site while logged in, turn on Comment mode, then click any heading, image or section and type. Everything your team leaves shows up here.', 'bp-site-comments'))}</p>
+          <ol class="bpsc-steps"><li><span>1</span>${esc(__('Open the site', 'bp-site-comments'))}</li><li><span>2</span>${esc(__('Press C or click Comment', 'bp-site-comments'))}</li><li><span>3</span>${esc(__('Click anything and type', 'bp-site-comments'))}</li></ol>
+          <a class="bpsc-btn bpsc-btn--dark" href="${esc(withParam(cfg.home, 'bp-comments', '1'))}" target="_blank" rel="noopener">${icon.cursor}<span>${esc(__('Start reviewing', 'bp-site-comments'))}</span></a>
         </div>`;
     }
     if (state.status === 'open' && !state.page && !state.person && !state.q.trim()) {
-      return `<div class="bpsc-empty">${art.done}<h3>All caught up</h3><p>Every comment has been resolved. New feedback will appear here.</p><button type="button" class="bpsc-btn" data-status="resolved">See resolved</button></div>`;
+      return `<div class="bpsc-empty">${art.done}<h3>${esc(__('All caught up', 'bp-site-comments'))}</h3><p>${esc(__('Every comment has been resolved. New feedback will appear here.', 'bp-site-comments'))}</p><button type="button" class="bpsc-btn" data-status="resolved">${esc(__('See resolved', 'bp-site-comments'))}</button></div>`;
     }
     if (state.status === 'open' && state.page && !state.person && !state.q.trim()) {
-      return `<div class="bpsc-empty">${art.done}<h3>This page is done</h3><p>No open comments left on this page.</p><button type="button" class="bpsc-btn" data-page="">Show all pages</button></div>`;
+      return `<div class="bpsc-empty">${art.done}<h3>${esc(__('This page is done', 'bp-site-comments'))}</h3><p>${esc(__('No open comments left on this page.', 'bp-site-comments'))}</p><button type="button" class="bpsc-btn" data-page="">${esc(__('Show all pages', 'bp-site-comments'))}</button></div>`;
     }
-    return `<div class="bpsc-empty">${art.none}<h3>Nothing matches</h3><p>Try a different search, person or page.</p><button type="button" class="bpsc-btn" data-act="clear">Clear filters</button></div>`;
+    return `<div class="bpsc-empty">${art.none}<h3>${esc(__('Nothing matches', 'bp-site-comments'))}</h3><p>${esc(__('Try a different search, person or page.', 'bp-site-comments'))}</p><button type="button" class="bpsc-btn" data-act="clear">${esc(__('Clear filters', 'bp-site-comments'))}</button></div>`;
   };
 
   const renderList = () => {
@@ -336,7 +381,7 @@
     const hadFocus = !!document.activeElement?.closest?.('.bpsc-row');   // Redraws keep keyboard focus.
     if (state.loading) { list.innerHTML = '<div class="bpsc-row is-loading"><span></span><span></span></div>'.repeat(7); return; }
     if (state.error) {
-      list.innerHTML = `<div class="bpsc-empty">${art.none}<h3>Couldn't load comments</h3><p>${esc(state.error)}</p><button type="button" class="bpsc-btn" data-act="retry">Try again</button></div>`;
+      list.innerHTML = `<div class="bpsc-empty">${art.none}<h3>${esc(__('Couldn\'t load comments', 'bp-site-comments'))}</h3><p>${esc(state.error)}</p><button type="button" class="bpsc-btn" data-act="retry">${esc(__('Try again', 'bp-site-comments'))}</button></div>`;
       return;
     }
     const items = filtered();
@@ -354,12 +399,12 @@
       pane.innerHTML = state.comments.length ? `
         <div class="bpsc-pane__idle">
           ${art.pick}
-          <h3>Pick a comment</h3>
-          <p>Its conversation opens here. Reply, resolve or jump to the spot on the page.</p>
+          <h3>${esc(__('Pick a comment', 'bp-site-comments'))}</h3>
+          <p>${esc(__('Its conversation opens here. Reply, resolve or jump to the spot on the page.', 'bp-site-comments'))}</p>
           <dl class="bpsc-keys">
-            <dt><kbd>↑</kbd><kbd>↓</kbd></dt><dd>Move</dd><dt><kbd>Enter</kbd></dt><dd>Open</dd>
-            <dt><kbd>E</kbd></dt><dd>Resolve</dd><dt><kbd>R</kbd></dt><dd>Reply</dd>
-            <dt><kbd>X</kbd></dt><dd>Select</dd><dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>Select all</dd><dt><kbd>/</kbd></dt><dd>Search</dd>
+            <dt><kbd>↑</kbd><kbd>↓</kbd></dt><dd>${esc(__('Move', 'bp-site-comments'))}</dd><dt><kbd>Enter</kbd></dt><dd>${esc(__('Open', 'bp-site-comments'))}</dd>
+            <dt><kbd>E</kbd></dt><dd>${esc(__('Resolve', 'bp-site-comments'))}</dd><dt><kbd>R</kbd></dt><dd>${esc(__('Reply', 'bp-site-comments'))}</dd>
+            <dt><kbd>X</kbd></dt><dd>${esc(__('Select', 'bp-site-comments'))}</dd><dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>${esc(__('Select all', 'bp-site-comments'))}</dd><dt><kbd>/</kbd></dt><dd>${esc(__('Search', 'bp-site-comments'))}</dd>
           </dl>
         </div>` : '';
       return;
@@ -368,27 +413,27 @@
     const msg = (r, first) => `
       <li class="${first ? 'is-first' : ''}">
         ${avatar(r.author, r.avatar, first ? 'lg' : '')}
-        <div><p class="bpsc-msg__by"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time>${!first && r.mine && r.id ? `<button type="button" class="bpsc-msg__del" data-act="del-reply" data-reply="${esc(r.id)}" title="You can delete your reply for 15 minutes after posting">Delete</button>` : ''}</p><p class="bpsc-msg__text">${rich(r.text)}</p></div>
+        <div><p class="bpsc-msg__by"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}" title="${esc(fullDate(r.date))}">${ago(r.date)}</time>${!first && canDelReply(r) ? `<button type="button" class="bpsc-msg__del" data-act="del-reply" data-reply="${esc(r.id)}" title="${esc(sprintf(_n('You can delete your reply for %d minute after posting', 'You can delete your reply for %d minutes after posting', Number(cfg.window) || 15, 'bp-site-comments'), Number(cfg.window) || 15))}">${esc(__('Delete', 'bp-site-comments'))}</button>` : ''}</p><p class="bpsc-msg__text">${rich(r.text)}</p></div>
       </li>`;
     pane.innerHTML = `
       <header class="bpsc-pane__head">
-        <button type="button" class="bpsc-x bpsc-pane__back" data-act="close" aria-label="Close (Esc)">${icon.close}</button>
-        <span class="bpsc-status${done ? ' is-done' : ''}">${done ? `${icon.check}Resolved` : 'Open'}</span>
+        <button type="button" class="bpsc-x bpsc-pane__back" data-act="close" aria-label="${esc(__('Close (Esc)', 'bp-site-comments'))}">${icon.close}</button>
+        <span class="bpsc-status${done ? ' is-done' : ''}">${done ? `${icon.check}${esc(__('Resolved', 'bp-site-comments'))}` : esc(__('Open', 'bp-site-comments'))}</span>
         <span class="bpsc-sep"></span>
-        ${canTrash(c) ? `<button type="button" class="bpsc-icon" data-act="trash" title="Move to Trash" aria-label="Move to Trash">${icon.trash}</button>` : ''}
-        ${c.can_edit ? `<button type="button" class="bpsc-btn bpsc-btn--sm ${done ? '' : 'bpsc-btn--ok'}" data-act="status">${done ? `${icon.undo}Reopen` : `${icon.check}Resolve`}</button>` : ''}
+        ${canTrash(c) ? `<button type="button" class="bpsc-icon" data-act="trash" title="${esc(__('Move to Trash', 'bp-site-comments'))}" aria-label="${esc(__('Move to Trash', 'bp-site-comments'))}">${icon.trash}</button>` : ''}
+        ${c.can_edit ? `<button type="button" class="bpsc-btn bpsc-btn--sm ${done ? '' : 'bpsc-btn--ok'}" data-act="status">${done ? `${icon.undo}${esc(__('Reopen', 'bp-site-comments'))}` : `${icon.check}${esc(__('Resolve', 'bp-site-comments'))}`}</button>` : ''}
       </header>
       <div class="bpsc-pane__scroll">
-        <a class="bpsc-where" href="${esc(withParam(c.page_url, 'bp-comment', c.id))}" target="_blank" rel="noopener" title="Open this spot on the page">
+        <a class="bpsc-where" href="${esc(withParam(c.page_url, 'bp-comment', c.id))}" target="_blank" rel="noopener" title="${esc(__('Open this spot on the page', 'bp-site-comments'))}">
           <span class="bpsc-pin${done ? ' is-done' : ''}">${done ? icon.check : numberOf(c)}</span>
-          <span class="bpsc-where__text"><b>${esc(pageName(c))}</b><span>${icon.target}${kind(c.tag)}${c.snippet ? `: ${esc(c.snippet)}` : ''}</span></span>
-          <span class="bpsc-where__go">View on page ${icon.ext}</span>
+          <span class="bpsc-where__text"><b>${esc(pageName(c))}</b><span>${icon.target}${esc(kind(c.tag))}${c.snippet ? `: ${esc(c.snippet)}` : ''}</span></span>
+          <span class="bpsc-where__go">${esc(__('View on page', 'bp-site-comments'))} ${icon.ext}</span>
         </a>
         <ol class="bpsc-thread">${msg(c, true)}${c.replies.map((r) => msg(r, false)).join('')}</ol>
       </div>
       <div class="bpsc-compose">
-        <textarea rows="2" maxlength="5000" data-reply-text placeholder="Reply to ${esc(c.author)}…" aria-label="Reply to ${esc(c.author)}"></textarea>
-        <div class="bpsc-compose__foot"><span><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span><button type="button" class="bpsc-btn bpsc-btn--dark bpsc-btn--sm" data-act="reply" disabled>${icon.send}Send</button></div>
+        <textarea rows="2" maxlength="5000" data-reply-text placeholder="${esc(sprintf(__('Reply to %s…', 'bp-site-comments'), c.author))}" aria-label="${esc(sprintf(__('Reply to %s', 'bp-site-comments'), c.author))}"></textarea>
+        <div class="bpsc-compose__foot"><span><kbd>${mac ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> ${esc(__('to send', 'bp-site-comments'))}</span><button type="button" class="bpsc-btn bpsc-btn--dark bpsc-btn--sm" data-act="reply" disabled>${icon.send}${esc(__('Send', 'bp-site-comments'))}</button></div>
       </div>`;
   };
 
@@ -402,7 +447,7 @@
   let toastTimer;
   const toast = (msg, { undo, bad } = {}) => {
     const t = $('[data-toast]');
-    t.innerHTML = `<span>${esc(msg)}</span>${undo ? `<button type="button" data-undo>${icon.undo}Undo</button>` : ''}`;
+    t.innerHTML = `<span>${esc(msg)}</span>${undo ? `<button type="button" data-undo>${icon.undo}${esc(__('Undo', 'bp-site-comments'))}</button>` : ''}`;
     t.classList.toggle('is-bad', !!bad);
     t.hidden = false;
     const hide = () => { t.hidden = true; };
@@ -416,13 +461,14 @@
 
   /* ---------------- data ---------------- */
   const load = async () => {
-    try { state.comments = await api(''); state.error = ''; } catch (e) { state.error = e.message; }
+    try { state.comments = (await api('')).map(stamp); state.error = ''; } catch (e) { state.error = e.message; }
     state.loading = false;
     if (state.active && !find(state.active)) state.active = 0;
     render();
   };
   const upsert = (fresh) => {
     const i = state.comments.findIndex((c) => c.id === fresh.id);
+    stamp(fresh);
     if (i >= 0) state.comments[i] = fresh; else state.comments.push(fresh);
   };
   const keepFocus = () => app.querySelector(`.bpsc-row[data-id="${state.focus}"]`)?.focus({ preventScroll: false });
@@ -434,6 +480,20 @@
     return (rest[idx] || rest[idx - 1] || {}).id || 0;
   };
 
+  // Runs one request per comment and splits the comments into the ones that worked and the ones that
+  // did not, so one failure (for example a comment a colleague just removed) cannot undo the rest on screen.
+  const each = async (targets, call) => {
+    const res = await Promise.allSettled(targets.map(call));
+    const done = [], failed = [], gone = [];
+    res.forEach((r, i) => {
+      if (r.status === 'fulfilled') done.push([targets[i], r.value]);
+      else if (r.reason?.status === 404) gone.push(targets[i]);   // Removed meanwhile by someone else.
+      else failed.push([targets[i], r.reason]);
+    });
+    if (gone.length) state.comments = state.comments.filter((c) => !gone.includes(c));
+    return { done, failed, error: failed[0]?.[1]?.message || '' };
+  };
+
   const setStatus = async (ids, status) => {
     const targets = ids.map(find).filter((c) => c && c.can_edit && c.status !== status);
     if (!targets.length) return;
@@ -442,15 +502,18 @@
     targets.forEach((c) => { c.status = status; });   // Instant; rolled back on error.
     render();
     keepFocus();
-    try {
-      (await Promise.all(targets.map((c) => api(`/${c.id}`, { method: 'PATCH', body: { status } })))).forEach(upsert);
-      const word = status === 'resolved' ? 'resolved' : 'reopened';
-      toast(targets.length === 1 ? `Comment ${word}` : `${targets.length} comments ${word}`, {
-        undo: () => setStatus(targets.map((c) => c.id), status === 'resolved' ? 'open' : 'resolved'),
+    const { done, failed, error } = await each(targets, (c) => api(`/${c.id}`, { method: 'PATCH', body: { status } }));
+    done.forEach(([, fresh]) => upsert(fresh));
+    failed.forEach(([c]) => { c.status = before.find(([x]) => x === c)[1]; });
+    /* translators: 1: comments changed, 2: comments not changed, 3: the error. */
+    if (failed.length) toast(done.length ? sprintf(__('%1$d changed, %2$d not: %3$s', 'bp-site-comments'), done.length, failed.length, error) : error, { bad: true });
+    else {
+      const n = done.length;
+      toast(status === 'resolved'
+        ? sprintf(_n('Comment resolved', '%d comments resolved', n, 'bp-site-comments'), n)
+        : sprintf(_n('Comment reopened', '%d comments reopened', n, 'bp-site-comments'), n), {
+        undo: () => setStatus(done.map(([c]) => c.id), status === 'resolved' ? 'open' : 'resolved'),
       });
-    } catch (e) {
-      before.forEach(([c, s]) => { c.status = s; });
-      toast(e.message, { bad: true });
     }
     render();
   };
@@ -465,25 +528,27 @@
     saveFilters();
     render();
     keepFocus();
-    try {
-      await Promise.all(targets.map((c) => api(`/${c.id}`, { method: 'DELETE' })));
-      state.trash += targets.length;
-      renderTrash();
-      toast(targets.length === 1 ? 'Moved to Trash' : `${targets.length} comments moved to Trash`, {
-        undo: async () => {
-          try {
-            (await Promise.all(targets.map((c) => api(`/${c.id}/restore`, { method: 'POST' })))).forEach(upsert);
-            state.trash = Math.max(0, state.trash - targets.length);
-            render();
-            toast(targets.length === 1 ? 'Comment restored' : 'Comments restored');
-          } catch (e) { toast(e.message, { bad: true }); }
-        },
-      });
-    } catch (e) {
-      state.comments.push(...targets);
+    const { done, failed, error } = await each(targets, (c) => api(`/${c.id}`, { method: 'DELETE' }));
+    const gone = done.map(([c]) => c);
+    state.trash += gone.length;
+    if (failed.length) {
+      state.comments.push(...failed.map(([c]) => c));   // Only the ones still on the server come back.
       render();
-      toast(e.message, { bad: true });
+      /* translators: 1: comments moved, 2: comments not moved, 3: the error. */
+      toast(gone.length ? sprintf(__('%1$d moved to Trash, %2$d not: %3$s', 'bp-site-comments'), gone.length, failed.length, error) : error, { bad: true });
+      return;
     }
+    renderTrash();
+    toast(sprintf(_n('Moved to Trash', '%d comments moved to Trash', gone.length, 'bp-site-comments'), gone.length), {
+      undo: async () => {
+        const back = await each(gone, (c) => api(`/${c.id}/restore`, { method: 'POST' }));
+        back.done.forEach(([, fresh]) => upsert(fresh));
+        state.trash = Math.max(0, state.trash - back.done.length);
+        render();
+        if (back.failed.length) toast(back.error, { bad: true });
+        else toast(sprintf(_n('Comment restored', '%d comments restored', back.done.length, 'bp-site-comments'), back.done.length));
+      },
+    });
   };
 
   const open = (id) => { state.active = id; state.focus = id; saveFilters(); renderList(); renderPane(); };
@@ -529,12 +594,12 @@
       else if (act === 'trash') trash([c.id]);
       else if (act === 'del-reply') {
         // Second click confirms.
-        if (!btn.dataset.sure) { btn.dataset.sure = '1'; btn.textContent = 'Delete for sure?'; return; }
+        if (!btn.dataset.sure) { btn.dataset.sure = '1'; btn.textContent = __('Delete for sure?', 'bp-site-comments'); return; }
         btn.disabled = true;
         try {
           upsert(await api(`/${c.id}/replies/${btn.dataset.reply}`, { method: 'DELETE' }));
           renderList(); renderPane();
-          toast('Reply deleted');
+          toast(__('Reply deleted', 'bp-site-comments'));
         } catch (err) { toast(err.message, { bad: true }); btn.disabled = false; }
       }
       else if (act === 'reply') {
@@ -546,7 +611,7 @@
           upsert(await api(`/${c.id}/replies`, { method: 'POST', body: { text } }));
           renderList(); renderPane();
           $('.bpsc-pane__scroll')?.scrollTo({ top: 1e6 });
-          toast('Reply sent');
+          toast(__('Reply sent', 'bp-site-comments'));
         } catch (err) { toast(err.message, { bad: true }); btn.disabled = false; }
       }
       return;
@@ -633,6 +698,14 @@
     }
   });
 
+  // Your reply's Delete goes away when its time is up, without redrawing (a half-written reply stays).
+  setInterval(() => {
+    app.querySelectorAll('[data-act="del-reply"]').forEach((b) => {
+      const r = find(state.active)?.replies.find((x) => x.id === b.dataset.reply);
+      if (!r || !canDelReply(r)) b.remove();
+    });
+  }, 5000);
+
   // Avatars that fail to load fall back to the initials underneath.
   app.addEventListener('error', (e) => { if (e.target.tagName === 'IMG') e.target.remove(); }, true);
   // Back on this tab after reviewing the site: show what changed (unless someone is typing).
@@ -648,7 +721,9 @@
   // ("removed", not WordPress's own "deleted", which wp-admin strips from the address before this runs.)
   const deleted = Number(params.get('removed')) || 0;
   if (deleted || params.get('trash') === 'empty') {
-    toast(deleted ? `${plural(deleted, 'comment', 'comments')} deleted permanently${state.trash ? '' : '. The Trash is now empty.'}` : 'The Trash is empty');
+    /* translators: %d: number of comments. */
+    const gone = sprintf(_n('%d comment deleted permanently.', '%d comments deleted permanently.', deleted, 'bp-site-comments'), deleted);
+    toast(deleted ? (state.trash ? gone : `${gone} ${__('The Trash is now empty.', 'bp-site-comments')}`) : __('The Trash is empty.', 'bp-site-comments'));
     const u = new URL(location.href);
     u.searchParams.delete('removed');
     u.searchParams.delete('trash');

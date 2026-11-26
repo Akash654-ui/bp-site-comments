@@ -3,7 +3,7 @@
  * Plugin Name:       Site Comments by BornPixel
  * Plugin URI:        https://github.com/Akash654-ui/bp-site-comments
  * Description:       Review the live site and leave comments on any text, image, box or section. Logged-in users turn on Comment mode from the round button or the admin bar, click anything on the page and type. Comments are pinned to that spot, can be replied to and resolved, and are listed under Site Comments in the dashboard. Visitors never see any of it.
- * Version:           1.4.2
+ * Version:           1.5.0
  * Requires at least: 6.5
  * Requires PHP:      8.0
  * Author:            BornPixel
@@ -19,7 +19,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'BP_SC_VERSION', '1.4.2' );
+define( 'BP_SC_VERSION', '1.5.0' );
 define( 'BP_SC_URL', plugin_dir_url( __FILE__ ) );
 define( 'BP_SC_TYPE', 'bp_site_comment' );
 
@@ -36,6 +36,15 @@ function bp_sc_clean_text( $text ): string {
 	// Control characters only (\p{Cc}): zero-width joiners are kept, Hindi and other scripts need them.
 	$text = preg_replace( '/[^\P{Cc}\n\t]/u', '', str_replace( "\r\n", "\n", $text ) ) ?? '';
 	return trim( bp_sc_cut( $text, 5000 ) );
+}
+
+/**
+ * One line of page text (the element's snippet) kept exactly as shown on the page, so the comment
+ * finds its element again: sanitize_text_field() would drop text like "<br>" and break the match.
+ * Always printed escaped.
+ */
+function bp_sc_line( $text, int $length ): string {
+	return bp_sc_cut( trim( (string) preg_replace( '/\s+/u', ' ', bp_sc_clean_text( $text ) ) ), $length );
 }
 
 /** Stored text -> plain text. Comments are saved HTML-encoded (see bp_sc_clean_text). */
@@ -120,8 +129,35 @@ function bp_sc_replies( int $comment_id ): array {
 	unset( $reply );
 	return $replies;
 }
-function bp_sc_save_replies( int $comment_id, array $replies ): void {
-	update_post_meta( $comment_id, '_bp_sc_replies', wp_slash( wp_json_encode( array_values( $replies ) ) ) );
+/**
+ * Changes a comment's replies safely when two people reply at the same moment.
+ * $change gets the current list and returns the new one (or a WP_Error to stop). The list is only
+ * saved if nobody else saved it in between (the old value is part of the update); otherwise it is
+ * read again and the change is repeated, so no reply is ever overwritten.
+ *
+ * @return true|WP_Error
+ */
+function bp_sc_update_replies( int $comment_id, callable $change ) {
+	for ( $try = 0; $try < 5; $try++ ) {
+		wp_cache_delete( $comment_id, 'post_meta' );
+		$old     = get_post_meta( $comment_id, '_bp_sc_replies', true );
+		$replies = $change( bp_sc_replies( $comment_id ) );
+		if ( is_wp_error( $replies ) ) {
+			return $replies;
+		}
+		$new = wp_json_encode( array_values( $replies ) );
+		if ( $new === $old ) {
+			return true;
+		}
+		$saved = '' === $old || false === $old
+			? add_post_meta( $comment_id, '_bp_sc_replies', wp_slash( $new ), true )
+			: update_post_meta( $comment_id, '_bp_sc_replies', wp_slash( $new ), $old );
+		if ( $saved ) {
+			return true;
+		}
+		usleep( 50000 );
+	}
+	return new WP_Error( 'bp_sc_busy', __( 'Someone else is changing this comment right now. Please try again.', 'bp-site-comments' ), array( 'status' => 409 ) );
 }
 function bp_sc_reply_seconds_left( array $reply ): int {
 	if ( empty( $reply['user'] ) || (int) $reply['user'] !== get_current_user_id() ) {
@@ -157,6 +193,16 @@ function bp_sc_page_key( string $url ): string {
 		ksort( $query );
 	}
 	return $query ? $path . '?' . http_build_query( $query ) : $path;
+}
+
+/**
+ * A page address on this site, or '' for anything else, so dashboard links never lead off-site.
+ * Same host as the home URL; extra domains (language or mapped domains) come from WordPress's
+ * own allowed_redirect_hosts filter.
+ */
+function bp_sc_page_url( string $url ): string {
+	$url = esc_url_raw( $url, array( 'http', 'https' ) );
+	return $url && wp_parse_url( $url, PHP_URL_HOST ) ? wp_validate_redirect( $url, '' ) : '';
 }
 
 /* -------------------------------------------------------------------------
@@ -202,6 +248,7 @@ function bp_sc_format( WP_Post $post ): array {
 		'id'        => $post->ID,
 		'text'      => bp_sc_text( $post ),
 		'author'    => $author ? $author->display_name : __( 'Someone', 'bp-site-comments' ),
+		'author_id' => (int) $post->post_author, // Lets the dashboard tell apart two people with the same name.
 		'avatar'    => get_avatar_url( (int) $post->post_author, array( 'size' => 64, 'default' => 'blank' ) ),
 		'mine'      => (int) $post->post_author === get_current_user_id(),
 		'date'      => get_post_time( 'c', true, $post ),
@@ -239,18 +286,19 @@ add_action(
 					'permission_callback' => fn( WP_REST_Request $r ) => bp_sc_can_comment() && ( '' !== (string) $r['url'] || current_user_can( 'edit_posts' ) ),
 					'args'                => array( 'url' => array( 'type' => 'string', 'default' => '' ) ),
 					'callback'            => function ( WP_REST_Request $r ) {
+						// Newest first, so if a site ever has more than the limit it is the oldest that drop out;
+						// then back to oldest first, the order the pins are numbered in.
 						$query = array(
 							'post_type'      => BP_SC_TYPE,
 							'post_status'    => 'publish',
 							'posts_per_page' => 2000,
-							'orderby'        => 'date',
-							'order'          => 'ASC',
+							'orderby'        => array( 'date' => 'DESC', 'ID' => 'DESC' ),
 						);
 						if ( '' !== (string) $r['url'] ) {
 							$query['meta_key']   = '_bp_sc_page_key'; // phpcs:ignore WordPress.DB.SlowDBQuery
 							$query['meta_value'] = bp_sc_page_key( (string) $r['url'] ); // phpcs:ignore WordPress.DB.SlowDBQuery
 						}
-						return array_map( 'bp_sc_format', get_posts( $query ) );
+						return array_map( 'bp_sc_format', array_reverse( get_posts( $query ) ) );
 					},
 				),
 				array(
@@ -269,24 +317,31 @@ add_action(
 						if ( '' === $text ) {
 							return new WP_Error( 'bp_sc_empty', __( 'Write a comment first.', 'bp-site-comments' ), array( 'status' => 400 ) );
 						}
-						$url = esc_url_raw( (string) $r['url'] );
+						$url = bp_sc_page_url( (string) $r['url'] );
+						if ( '' === $url ) {
+							return new WP_Error( 'bp_sc_bad_url', __( 'Comments can only be left on pages of this site.', 'bp-site-comments' ), array( 'status' => 400 ) );
+						}
+						// wp_insert_post() and post meta strip one level of backslashes, so the data goes in
+						// slashed; otherwise "C:\Users" would be saved as "C:Users".
 						$id  = wp_insert_post(
-							array(
-								'post_type'    => BP_SC_TYPE,
-								'post_status'  => 'publish',
-								'post_author'  => get_current_user_id(),
-								'post_title'   => bp_sc_text_fields( $text )['post_title'],
-								'post_content' => bp_sc_text_fields( $text )['post_content'],
-								'meta_input'   => array(
-									'_bp_sc_page_key'   => bp_sc_page_key( $url ),
-									'_bp_sc_page_url'   => $url,
-									'_bp_sc_page_title' => sanitize_text_field( (string) $r['title'] ),
-									'_bp_sc_selector'   => sanitize_text_field( (string) $r['selector'] ),
-									'_bp_sc_snippet'    => bp_sc_cut( sanitize_text_field( (string) $r['snippet'] ), 160 ),
-									'_bp_sc_tag'        => sanitize_key( (string) $r['tag'] ),
-									'_bp_sc_status'     => 'open',
-									'_bp_sc_replies'    => '[]',
-								),
+							wp_slash(
+								array(
+									'post_type'    => BP_SC_TYPE,
+									'post_status'  => 'publish',
+									'post_author'  => get_current_user_id(),
+									'post_title'   => bp_sc_text_fields( $text )['post_title'],
+									'post_content' => bp_sc_text_fields( $text )['post_content'],
+									'meta_input'   => array(
+										'_bp_sc_page_key'   => bp_sc_page_key( $url ),
+										'_bp_sc_page_url'   => $url,
+										'_bp_sc_page_title' => sanitize_text_field( (string) $r['title'] ),
+										'_bp_sc_selector'   => sanitize_text_field( (string) $r['selector'] ),
+										'_bp_sc_snippet'    => bp_sc_line( $r['snippet'], 160 ),
+										'_bp_sc_tag'        => sanitize_key( (string) $r['tag'] ),
+										'_bp_sc_status'     => 'open',
+										'_bp_sc_replies'    => '[]',
+									),
+								)
 							),
 							true
 						);
@@ -300,9 +355,10 @@ add_action(
 			)
 		);
 
+		// Only live comments: one in the Trash can be restored, not replied to, resolved or edited.
 		$get_comment = function ( WP_REST_Request $r ) {
 			$post = get_post( (int) $r['id'] );
-			return ( $post && BP_SC_TYPE === $post->post_type ) ? $post : null;
+			return ( $post && BP_SC_TYPE === $post->post_type && 'publish' === $post->post_status ) ? $post : null;
 		};
 
 		register_rest_route(
@@ -322,17 +378,19 @@ add_action(
 						if ( ! $mine && ! bp_sc_can_manage() ) {
 							return new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can change this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
 						}
-						if ( null !== $r['text'] && ! bp_sc_edit_seconds_left( $post ) ) {
+						$text = null === $r['text'] ? null : bp_sc_clean_text( $r['text'] );
+						if ( null !== $text && ! bp_sc_edit_seconds_left( $post ) ) {
 							return bp_sc_edit_closed( 'edit' );
+						}
+						// Checked before anything is saved, so a refused edit never changes the status either.
+						if ( '' === $text ) {
+							return new WP_Error( 'bp_sc_empty', __( 'Write something first, or delete the comment.', 'bp-site-comments' ), array( 'status' => 400 ) );
 						}
 						if ( null !== $r['status'] ) {
 							update_post_meta( $post->ID, '_bp_sc_status', 'resolved' === $r['status'] ? 'resolved' : 'open' );
 						}
-						if ( null !== $r['text'] ) {
-							$text = bp_sc_clean_text( $r['text'] );
-							if ( '' !== $text ) {
-								wp_update_post( array( 'ID' => $post->ID ) + bp_sc_text_fields( $text ) );
-							}
+						if ( null !== $text ) {
+							wp_update_post( wp_slash( array( 'ID' => $post->ID ) + bp_sc_text_fields( $text ) ) ); // Slashed, as wp_insert_post() above.
 						}
 						return bp_sc_format( get_post( $post->ID ) );
 					},
@@ -369,8 +427,10 @@ add_action(
 					if ( ! $post || BP_SC_TYPE !== $post->post_type || 'trash' !== $post->post_status ) {
 						return new WP_Error( 'bp_sc_missing', __( 'Comment not found in the Trash.', 'bp-site-comments' ), array( 'status' => 404 ) );
 					}
-					if ( (int) $post->post_author !== get_current_user_id() && ! bp_sc_can_manage() ) {
-						return new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can restore this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
+					// The same people who may delete it now (the author within the window, or a site manager),
+					// so an author cannot bring back a comment a manager removed.
+					if ( ! bp_sc_can_delete( $post ) ) {
+						return new WP_Error( 'bp_sc_forbidden', __( 'Only a site manager can restore this comment.', 'bp-site-comments' ), array( 'status' => 403 ) );
 					}
 					wp_untrash_post( $post->ID );
 					return bp_sc_format( get_post( $post->ID ) );
@@ -387,13 +447,15 @@ add_action(
 				'args'                => array( 'text' => array( 'type' => 'string', 'required' => true ) ),
 				'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
 					$post = $get_comment( $r );
-					$text = bp_sc_clean_text( $r['text'] );
-					if ( ! $post || '' === $text ) {
-						return new WP_Error( 'bp_sc_bad', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
+					if ( ! $post ) {
+						return new WP_Error( 'bp_sc_missing', __( 'Comment not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
 					}
-					$user      = wp_get_current_user();
-					$replies   = bp_sc_replies( $post->ID );
-					$replies[] = array(
+					$text = bp_sc_clean_text( $r['text'] );
+					if ( '' === $text ) {
+						return new WP_Error( 'bp_sc_empty', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
+					}
+					$user  = wp_get_current_user();
+					$reply = array(
 						'id'     => substr( md5( uniqid( (string) $user->ID, true ) ), 0, 12 ),
 						'user'   => $user->ID,
 						'author' => $user->display_name,
@@ -401,7 +463,10 @@ add_action(
 						'text'   => $text,
 						'date'   => gmdate( 'c' ),
 					);
-					bp_sc_save_replies( $post->ID, $replies );
+					$saved = bp_sc_update_replies( $post->ID, fn( $replies ) => array_merge( $replies, array( $reply ) ) );
+					if ( is_wp_error( $saved ) ) {
+						return $saved;
+					}
 					do_action( 'bp_sc_reply_added', $post->ID );
 					return bp_sc_format( get_post( $post->ID ) );
 				},
@@ -418,42 +483,56 @@ add_action(
 					'permission_callback' => $auth,
 					'args'                => array( 'text' => array( 'type' => 'string', 'required' => true ) ),
 					'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
-						$post    = $get_comment( $r );
-						$replies = $post ? bp_sc_replies( $post->ID ) : array();
-						$i       = array_search( (string) $r['reply'], array_column( $replies, 'id' ), true );
-						if ( false === $i ) {
-							return new WP_Error( 'bp_sc_missing', __( 'Reply not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
+						$post = $get_comment( $r );
+						if ( ! $post ) {
+							return new WP_Error( 'bp_sc_missing', __( 'Comment not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
 						}
-						if ( ! bp_sc_reply_seconds_left( $replies[ $i ] ) ) {
-							return bp_sc_edit_closed( 'edit' );
-						}
-						$text = bp_sc_clean_text( $r['text'] );
-						if ( '' === $text ) {
-							return new WP_Error( 'bp_sc_empty', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
-						}
-						$replies[ $i ]['text'] = $text;
-						bp_sc_save_replies( $post->ID, $replies );
-						return bp_sc_format( get_post( $post->ID ) );
+						$text  = bp_sc_clean_text( $r['text'] );
+						$saved = bp_sc_update_replies(
+							$post->ID,
+							function ( $replies ) use ( $r, $text ) {
+								$i = array_search( (string) $r['reply'], array_column( $replies, 'id' ), true );
+								if ( false === $i ) {
+									return new WP_Error( 'bp_sc_missing', __( 'Reply not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
+								}
+								if ( ! bp_sc_reply_seconds_left( $replies[ $i ] ) ) {
+									return bp_sc_edit_closed( 'edit' );
+								}
+								if ( '' === $text ) {
+									return new WP_Error( 'bp_sc_empty', __( 'Write a reply first.', 'bp-site-comments' ), array( 'status' => 400 ) );
+								}
+								$replies[ $i ]['text'] = $text;
+								return $replies;
+							}
+						);
+						return is_wp_error( $saved ) ? $saved : bp_sc_format( get_post( $post->ID ) );
 					},
 				),
 				array(
 					'methods'             => 'DELETE',
 					'permission_callback' => $auth,
 					'callback'            => function ( WP_REST_Request $r ) use ( $get_comment ) {
-						$post    = $get_comment( $r );
-						$replies = $post ? bp_sc_replies( $post->ID ) : array();
-						$i       = array_search( (string) $r['reply'], array_column( $replies, 'id' ), true );
-						if ( false === $i ) {
-							return new WP_Error( 'bp_sc_missing', __( 'Reply not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
+						$post = $get_comment( $r );
+						if ( ! $post ) {
+							return new WP_Error( 'bp_sc_missing', __( 'Comment not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
 						}
-						if ( ! bp_sc_reply_seconds_left( $replies[ $i ] ) && ! bp_sc_can_manage() ) {
-							return (int) ( $replies[ $i ]['user'] ?? 0 ) === get_current_user_id()
-								? bp_sc_edit_closed( 'delete' )
-								: new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can delete this reply.', 'bp-site-comments' ), array( 'status' => 403 ) );
-						}
-						array_splice( $replies, $i, 1 );
-						bp_sc_save_replies( $post->ID, $replies );
-						return bp_sc_format( get_post( $post->ID ) );
+						$saved = bp_sc_update_replies(
+							$post->ID,
+							function ( $replies ) use ( $r ) {
+								$i = array_search( (string) $r['reply'], array_column( $replies, 'id' ), true );
+								if ( false === $i ) {
+									return new WP_Error( 'bp_sc_missing', __( 'Reply not found.', 'bp-site-comments' ), array( 'status' => 404 ) );
+								}
+								if ( ! bp_sc_reply_seconds_left( $replies[ $i ] ) && ! bp_sc_can_manage() ) {
+									return (int) ( $replies[ $i ]['user'] ?? 0 ) === get_current_user_id()
+										? bp_sc_edit_closed( 'delete' )
+										: new WP_Error( 'bp_sc_forbidden', __( 'Only the author or a site manager can delete this reply.', 'bp-site-comments' ), array( 'status' => 403 ) );
+								}
+								array_splice( $replies, $i, 1 );
+								return $replies;
+							}
+						);
+						return is_wp_error( $saved ) ? $saved : bp_sc_format( get_post( $post->ID ) );
 					},
 				),
 			)
@@ -471,7 +550,8 @@ add_action(
 			return;
 		}
 		// The stylesheet is loaded inside the plugin's shadow root (see site-comments.js), not on the page.
-		wp_enqueue_script( 'bp-site-comments', BP_SC_URL . 'assets/site-comments.js', array(), BP_SC_VERSION, array( 'strategy' => 'defer', 'in_footer' => true ) );
+		wp_enqueue_script( 'bp-site-comments', BP_SC_URL . 'assets/site-comments.js', array( 'wp-i18n' ), BP_SC_VERSION, array( 'strategy' => 'defer', 'in_footer' => true ) );
+		wp_set_script_translations( 'bp-site-comments', 'bp-site-comments', __DIR__ . '/languages' );
 		wp_localize_script(
 			'bp-site-comments',
 			'bpSiteComments',
@@ -480,8 +560,8 @@ add_action(
 				'css'    => esc_url_raw( add_query_arg( 'ver', BP_SC_VERSION, BP_SC_URL . 'assets/site-comments.css' ) ),
 				'nonce'  => wp_create_nonce( 'wp_rest' ),
 				'manage' => bp_sc_can_manage(),
-				'user'   => wp_get_current_user()->display_name,
-				'admin'  => bp_sc_dashboard_url(),
+				// The dashboard link only for people who may open it (see the menu in admin/dashboard.php).
+				'admin'  => current_user_can( 'edit_posts' ) ? bp_sc_dashboard_url() : '',
 			)
 		);
 	}
@@ -528,13 +608,10 @@ add_action(
 		if ( 'bp_comment' === $col ) {
 			// A plain cut, not wp_trim_words(): that strips tags, and "<h2>" in a comment is text.
 			$cut  = bp_sc_cut( $c['text'], 180 );
-			$text = esc_html( $cut . ( $cut !== $c['text'] ? '…' : '' ) );
-			// Trashed comments are not linked to the page: the row offers Restore / Delete Permanently instead.
-			echo 'trash' === get_post_status( $id ) || ! $c['page_url']
-				? '<strong>' . $text . '</strong>' // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-				: '<strong><a href="' . esc_url( add_query_arg( 'bp-comment', $id, $c['page_url'] ) ) . '" target="_blank" rel="noopener">' . $text . '</a></strong>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			// Only the Trash uses this list, so the text is not linked: the row offers Restore / Delete Permanently.
+			echo '<strong>' . esc_html( $cut . ( $cut !== $c['text'] ? '…' : '' ) ) . '</strong>';
 			if ( $c['snippet'] ) {
-				echo '<br><span style="color:#646970">' . esc_html__( 'On:', 'bp-site-comments' ) . ' “' . esc_html( wp_trim_words( $c['snippet'], 14, '…' ) ) . '”</span>';
+				echo '<br><span style="color:#646970">' . esc_html__( 'On:', 'bp-site-comments' ) . ' “' . esc_html( bp_sc_cut( $c['snippet'], 90 ) ) . '”</span>';
 			}
 			if ( $c['replies'] ) {
 				/* translators: %d: number of replies. */
@@ -560,32 +637,10 @@ add_filter(
 	}
 );
 
-// Filter the list by status: Open / Resolved views.
+// Only the Trash screen of the old list is still shown (admin/dashboard.php sends the rest to the dashboard).
 add_filter(
 	'views_edit-' . BP_SC_TYPE,
-	function ( $views ) {
-		unset( $views['publish'], $views['draft'], $views['pending'], $views['private'] );
-		// The Trash screen is the only list still shown; Open and Resolved live in the dashboard.
-		if ( 'trash' === ( $_GET['post_status'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification
-			return array_intersect_key( $views, array( 'trash' => 1 ) );
-		}
-		$base = admin_url( 'edit.php?post_type=' . BP_SC_TYPE );
-		$cur  = sanitize_key( $_GET['bp_status'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
-		foreach ( array( 'open' => __( 'Open', 'bp-site-comments' ), 'resolved' => __( 'Resolved', 'bp-site-comments' ) ) as $k => $label ) {
-			$n           = count( get_posts( array( 'post_type' => BP_SC_TYPE, 'fields' => 'ids', 'posts_per_page' => -1, 'meta_key' => '_bp_sc_status', 'meta_value' => $k ) ) ); // phpcs:ignore WordPress.DB.SlowDBQuery
-			$views[ $k ] = sprintf( '<a href="%s"%s>%s <span class="count">(%d)</span></a>', esc_url( add_query_arg( 'bp_status', $k, $base ) ), $cur === $k ? ' class="current"' : '', esc_html( $label ), $n );
-		}
-		return $views;
-	}
-);
-add_action(
-	'pre_get_posts',
-	function ( WP_Query $q ) {
-		if ( is_admin() && $q->is_main_query() && BP_SC_TYPE === $q->get( 'post_type' ) && ! empty( $_GET['bp_status'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
-			$q->set( 'meta_key', '_bp_sc_status' );
-			$q->set( 'meta_value', sanitize_key( $_GET['bp_status'] ) ); // phpcs:ignore WordPress.Security.NonceVerification
-		}
-	}
+	fn( $views ) => array_intersect_key( $views, array( 'trash' => 1 ) )
 );
 
 // The single edit screen is not useful for these; send people to the page instead.
@@ -605,23 +660,10 @@ add_action(
 // Restoring from the Trash brings a comment back as it was (WordPress would make it a draft, hiding it from the page).
 add_filter( 'wp_untrash_post_status', fn( $status, $id, $previous ) => BP_SC_TYPE === get_post_type( $id ) ? ( $previous ?: 'publish' ) : $status, 10, 3 );
 
-// Row links: View on page + Trash normally; WordPress's own Restore + Delete Permanently in the Trash.
+// Row links in the Trash: only WordPress's own Restore and Delete Permanently.
 add_filter(
 	'post_row_actions',
-	function ( $actions, $post ) {
-		if ( BP_SC_TYPE !== $post->post_type ) {
-			return $actions;
-		}
-		if ( 'trash' === $post->post_status ) {
-			return array_intersect_key( $actions, array_flip( array( 'untrash', 'delete' ) ) );
-		}
-		$page = (string) get_post_meta( $post->ID, '_bp_sc_page_url', true );
-		$keep = array();
-		if ( $page ) {
-			$keep['bp_view'] = '<a href="' . esc_url( add_query_arg( 'bp-comment', $post->ID, $page ) ) . '" target="_blank" rel="noopener">' . esc_html__( 'View on page', 'bp-site-comments' ) . '</a>';
-		}
-		return $keep + array_intersect_key( $actions, array( 'trash' => true ) );
-	},
+	fn( $actions, $post ) => BP_SC_TYPE === $post->post_type ? array_intersect_key( $actions, array_flip( array( 'untrash', 'delete' ) ) ) : $actions,
 	10,
 	2
 );

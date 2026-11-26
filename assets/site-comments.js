@@ -10,7 +10,16 @@
    * and none of its styles leak into the site. That is what lets it drop into any WordPress site.
    */
   const cfg = window.bpSiteComments;
+  // WordPress's translation functions (wp-i18n); plain English if they are missing for any reason.
+  const { __, _n, sprintf } = window.wp?.i18n || {
+    __: (s) => s,
+    _n: (one, many, n) => (n === 1 ? one : many),
+    sprintf: (f, ...a) => { let i = 0; return f.replace(/%(%|(\d+)\$[sd]|[sd])/g, (m, x, p) => (x === '%' ? '%' : String(a[p ? p - 1 : i++]))); },
+  };
   if (!cfg || window.__bpSiteComments) return;
+  // Not inside frames: page-builder editors (Elementor, Divi, Bricks…) and other previews show the
+  // page in an iframe, where a second launcher and toolbar would sit on top of the editor.
+  if (window.self !== window.top) return;
   window.__bpSiteComments = true;
 
   const UI = 'bp-sc';
@@ -48,13 +57,21 @@
   }).join('');
   const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const ago = (iso) => {
-    let v = Math.max(1, (Date.now() - new Date(iso)) / 1000);
-    const steps = [[60, 'second'], [60, 'minute'], [24, 'hour'], [7, 'day'], [4.35, 'week'], [12, 'month'], [Infinity, 'year']];
-    for (const [n, unit] of steps) {
-      if (v < n) { v = Math.floor(v); return unit === 'second' ? 'just now' : `${v} ${unit}${v === 1 ? '' : 's'} ago`; }
-      v /= n;
-    }
-    return '';
+    const s = Math.max(1, (Date.now() - new Date(iso)) / 1000);
+    const n = (unit) => Math.floor(s / unit);
+    if (s < 60) return __('just now', 'bp-site-comments');
+    /* translators: %d: number of minutes. */
+    if (s < 3600) return sprintf(_n('%d minute ago', '%d minutes ago', n(60), 'bp-site-comments'), n(60));
+    /* translators: %d: number of hours. */
+    if (s < 86400) return sprintf(_n('%d hour ago', '%d hours ago', n(3600), 'bp-site-comments'), n(3600));
+    /* translators: %d: number of days. */
+    if (s < 604800) return sprintf(_n('%d day ago', '%d days ago', n(86400), 'bp-site-comments'), n(86400));
+    /* translators: %d: number of weeks. */
+    if (s < 2630880) return sprintf(_n('%d week ago', '%d weeks ago', n(604800), 'bp-site-comments'), n(604800));
+    /* translators: %d: number of months. */
+    if (s < 31570560) return sprintf(_n('%d month ago', '%d months ago', n(2630880), 'bp-site-comments'), n(2630880));
+    /* translators: %d: number of years. */
+    return sprintf(_n('%d year ago', '%d years ago', n(31570560), 'bp-site-comments'), n(31570560));
   };
   const api = async (path = '', opts = {}) => {
     const res = await fetch(cfg.api + path, {
@@ -65,9 +82,9 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      if (data.code === 'rest_cookie_invalid_nonce') throw new Error('Your session has expired. Reload the page and try again.');
-      if (res.status === 401) throw new Error('You have been logged out. Log in again to comment.');
-      throw new Error(data.message || 'Something went wrong. Please try again.');
+      if (data.code === 'rest_cookie_invalid_nonce') throw new Error(__('Your session has expired. Reload the page and try again.', 'bp-site-comments'));
+      if (res.status === 401) throw new Error(__('You have been logged out. Log in again to comment.', 'bp-site-comments'));
+      throw new Error(data.message || __('Something went wrong. Please try again.', 'bp-site-comments'));
     }
     return data;
   };
@@ -102,24 +119,24 @@
   /* What people call each kind of element, shown on the highlight. */
   const kind = (el) => {
     const t = el.tagName.toLowerCase();
-    if (/^h[1-6]$/.test(t)) return 'Heading';
-    if (t === 'img' || t === 'picture' || t === 'figure') return 'Image';
-    if (t === 'video' || t === 'iframe') return t === 'video' ? 'Video' : 'Embed';
-    if (t === 'p') return 'Paragraph';
-    if (t === 'a') return /\bbtn|button\b/.test(el.className) ? 'Button' : 'Link';
-    if (t === 'button') return 'Button';
-    if (t === 'li') return 'List item';
-    if (t === 'ul' || t === 'ol') return 'List';
-    if (t === 'section') return 'Section';
-    if (t === 'header') return 'Header';
-    if (t === 'footer') return 'Footer';
-    if (t === 'nav') return 'Menu';
-    if (t === 'form') return 'Form';
-    if (['input', 'select', 'textarea', 'label'].includes(t)) return 'Form field';
-    if (t === 'svg') return 'Icon';
-    if (t === 'summary' || t === 'details') return 'Question';
-    if (['span', 'b', 'strong', 'em', 'small', 'i', 'mark'].includes(t)) return 'Text';
-    return getComputedStyle(el).backgroundImage !== 'none' ? 'Image box' : 'Box';
+    if (/^h[1-6]$/.test(t)) return __('Heading', 'bp-site-comments');
+    if (t === 'img' || t === 'picture' || t === 'figure') return __('Image', 'bp-site-comments');
+    if (t === 'video' || t === 'iframe') return t === 'video' ? __('Video', 'bp-site-comments') : __('Embed', 'bp-site-comments');
+    if (t === 'p') return __('Paragraph', 'bp-site-comments');
+    if (t === 'a') return /\bbtn|button\b/.test(el.getAttribute('class') || '') ? __('Button', 'bp-site-comments') : __('Link', 'bp-site-comments');   // getAttribute: an SVG link's className is not a string.
+    if (t === 'button') return __('Button', 'bp-site-comments');
+    if (t === 'li') return __('List item', 'bp-site-comments');
+    if (t === 'ul' || t === 'ol') return __('List', 'bp-site-comments');
+    if (t === 'section') return __('Section', 'bp-site-comments');
+    if (t === 'header') return __('Header', 'bp-site-comments');
+    if (t === 'footer') return __('Footer', 'bp-site-comments');
+    if (t === 'nav') return __('Menu', 'bp-site-comments');
+    if (t === 'form') return __('Form', 'bp-site-comments');
+    if (['input', 'select', 'textarea', 'label'].includes(t)) return __('Form field', 'bp-site-comments');
+    if (t === 'svg') return __('Icon', 'bp-site-comments');
+    if (t === 'summary' || t === 'details') return __('Question', 'bp-site-comments');
+    if (['span', 'b', 'strong', 'em', 'small', 'i', 'mark'].includes(t)) return __('Text', 'bp-site-comments');
+    return getComputedStyle(el).backgroundImage !== 'none' ? __('Image box', 'bp-site-comments') : __('Box', 'bp-site-comments');
   };
 
   /* The natural thing to comment on under the pointer. */
@@ -208,28 +225,28 @@
 
   const tpl = doc.createElement('template');
   tpl.innerHTML = `
-    <div class="hl" aria-hidden="true"><span class="hl__tag"><b></b><span class="hl__hint">Click to comment</span></span></div>
+    <div class="hl" aria-hidden="true"><span class="hl__tag"><b></b><span class="hl__hint">${esc(__('Click to comment', 'bp-site-comments'))}</span></span></div>
     <div class="pins"></div>
-    <button class="launch" type="button" aria-pressed="false" title="Comment mode (C)">${icon.chat}<span>Comment</span><span class="launch__count" hidden></span></button>
-    <div class="bar" role="toolbar" aria-label="Comment mode" hidden>
-      <span class="bar__mode"><span class="bar__live" aria-hidden="true"></span>Comment mode</span>
-      <span class="bar__hint">${icon.cursor}Click anything to leave a comment<span class="bar__keys"><kbd>${mac ? '⌘' : 'Ctrl'}</kbd>+ click opens a link</span></span>
+    <button class="launch" type="button" aria-pressed="false" title="${esc(__('Comment mode (C)', 'bp-site-comments'))}">${icon.chat}<span>${esc(__('Comment', 'bp-site-comments'))}</span><span class="launch__count" hidden></span></button>
+    <div class="bar" role="toolbar" aria-label="${esc(__('Comment mode', 'bp-site-comments'))}" hidden>
+      <span class="bar__mode"><span class="bar__live" aria-hidden="true"></span>${esc(__('Comment mode', 'bp-site-comments'))}</span>
+      <span class="bar__hint">${icon.cursor}${esc(__('Click anything to leave a comment', 'bp-site-comments'))}<span class="bar__keys"><kbd>${mac ? '⌘' : 'Ctrl'}</kbd>${esc(__('+ click opens a link', 'bp-site-comments'))}</span></span>
       <span class="bar__sep" aria-hidden="true"></span>
-      <button type="button" class="bar__chip" data-resolved aria-pressed="false" title="Show resolved comments on the page">${icon.check}Show resolved</button>
-      <button type="button" class="bar__chip" data-panel aria-expanded="false">${icon.list}All comments<span class="bar__count" data-bar-count></span></button>
-      <button type="button" class="bar__done" data-exit>Done</button>
+      <button type="button" class="bar__chip" data-resolved aria-pressed="false" title="${esc(__('Show resolved comments on the page', 'bp-site-comments'))}">${icon.check}${esc(__('Show resolved', 'bp-site-comments'))}</button>
+      <button type="button" class="bar__chip" data-panel aria-expanded="false">${icon.list}${esc(__('All comments', 'bp-site-comments'))}<span class="bar__count" data-bar-count></span></button>
+      <button type="button" class="bar__done" data-exit>${esc(__('Done', 'bp-site-comments'))}</button>
     </div>
-    <aside class="panel" aria-label="Comments on this page" hidden>
+    <aside class="panel" aria-label="${esc(__('Comments on this page', 'bp-site-comments'))}" hidden>
       <header class="panel__head">
-        <div><b>Comments</b><span data-panel-count></span></div>
-        <button type="button" class="icon-btn" data-panel-close aria-label="Close list">${icon.close}</button>
+        <div><b>${esc(__('Comments', 'bp-site-comments'))}</b><span data-panel-count></span></div>
+        <button type="button" class="icon-btn" data-panel-close aria-label="${esc(__('Close list', 'bp-site-comments'))}">${icon.close}</button>
       </header>
       <div class="tabs" role="tablist">
-        <button type="button" role="tab" aria-selected="true" data-tab="open">Open</button>
-        <button type="button" role="tab" aria-selected="false" data-tab="resolved">Resolved</button>
+        <button type="button" role="tab" aria-selected="true" data-tab="open">${esc(__('Open', 'bp-site-comments'))}</button>
+        <button type="button" role="tab" aria-selected="false" data-tab="resolved">${esc(__('Resolved', 'bp-site-comments'))}</button>
       </div>
       <ol class="panel__list" data-panel-list></ol>
-      <a class="panel__all" href="${esc(cfg.admin)}">All comments across the site ↗</a>
+      <a class="panel__all" href="${esc(cfg.admin)}"${cfg.admin ? '' : ' hidden'}>${esc(__('All comments across the site', 'bp-site-comments'))} ↗</a>
     </aside>
     <div class="toast" role="status" aria-live="polite"></div>`;
   shadow.append(tpl.content);
@@ -266,7 +283,8 @@
     badge.textContent = n;
     $('[data-bar-count]').textContent = n ? n : '';
     const ab = doc.querySelector('#wp-admin-bar-bp-site-comments .ab-label');
-    if (ab) ab.textContent = n ? `Comment mode (${n})` : 'Comment mode';
+    /* translators: %d: number of open comments on this page. */
+    if (ab) ab.textContent = n ? sprintf(__('Comment mode (%d)', 'bp-site-comments'), n) : __('Comment mode', 'bp-site-comments');
   };
 
   const load = async () => {
@@ -303,9 +321,11 @@
     trackPins();
   };
 
+  // Done, the admin-bar item and the C key never throw away something typed (keepDraft); Esc still does.
+  const toggle = () => { if (!on) setMode(true); else if (!keepDraft()) setMode(false); };
   launcher.addEventListener('click', () => setMode(true));
-  doc.querySelector('#wp-admin-bar-bp-site-comments > a')?.addEventListener('click', (e) => { e.preventDefault(); setMode(!on); });
-  $('[data-exit]').addEventListener('click', () => setMode(false));
+  doc.querySelector('#wp-admin-bar-bp-site-comments > a')?.addEventListener('click', (e) => { e.preventDefault(); toggle(); });
+  $('[data-exit]').addEventListener('click', toggle);
   $('[data-resolved]').addEventListener('click', (e) => {
     showResolved = !showResolved;
     e.currentTarget.setAttribute('aria-pressed', String(showResolved));
@@ -329,7 +349,7 @@
     if (openPopover) return drawBox(openPopover.anchor, '');   // Keep the discussed element framed.
     const el = target();
     drawBox(el, el ? kind(el) : '');
-    hl.querySelector('.hl__hint').textContent = el?.parentElement && el.parentElement !== doc.body ? 'Click to comment · ↑ wider' : 'Click to comment';
+    hl.querySelector('.hl__hint').textContent = el?.parentElement && el.parentElement !== doc.body ? __('Click to comment · ↑ wider', 'bp-site-comments') : __('Click to comment', 'bp-site-comments');
   };
   const hideHl = () => { hoverEl = lockedEl = null; pickStack = []; hl.classList.remove('is-on'); };
 
@@ -359,7 +379,7 @@
   const keepDraft = () => {
     const typed = [...(openPopover?.el.querySelectorAll('textarea') || [])].find((t) => t.value.trim());
     if (!typed) return false;
-    say('Post or cancel what you are writing first', true);
+    say(__('Post or cancel what you are writing first', 'bp-site-comments'), true);
     typed.focus({ preventScroll: true });
     return true;
   };
@@ -399,7 +419,8 @@
   /* ---------------- keyboard ---------------- */
   doc.addEventListener('keydown', (e) => {
     const inner = e.composedPath?.()[0] || e.target;
-    const typing = inner.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+    // isContentEditable also covers contenteditable="plaintext-only" and editable children.
+    const typing = inner.isContentEditable || inner.closest?.('input, textarea, select');
     if (e.key === 'Escape') {
       if (openPopover) closePopover();
       else if (!panel.hidden) setPanel(false);
@@ -407,7 +428,8 @@
       return;
     }
     if (typing) return;
-    if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && !e.altKey) { setMode(!on); return; }
+    // preventDefault: when a draft is kept, the cursor goes back into it, and the "c" must not be typed there.
+    if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); toggle(); return; }
     if (!on || openPopover) return;
     const el = target();
     if (e.key === 'ArrowUp' && el?.parentElement && el.parentElement !== doc.body) {
@@ -448,7 +470,7 @@
 
   const popover = (el, html, cls = '') => {
     openPopover?.el.remove();
-    const pop = h('div', { class: `pop ${cls}`, role: 'dialog', 'aria-label': 'Comment' }, html);
+    const pop = h('div', { class: `pop ${cls}`, role: 'dialog', 'aria-label': __('Comment', 'bp-site-comments') }, html);
     shadow.append(pop);
     openPopover = { el: pop, anchor: el };
     place(pop, el);
@@ -459,7 +481,7 @@
   // Commenting on a link must not make it a dead end: the box offers to open it (the only way on a phone).
   const openLink = (el) => {
     const a = linkOf(el);
-    return a ? `<a class="open-link" data-open-link href="${esc(a.href)}"${a.target === '_blank' || !/^https?:/i.test(a.href) ? ' target="_blank" rel="noopener"' : ''}>Open link${icon.open}</a>` : '';
+    return a ? `<a class="open-link" data-open-link href="${esc(a.href)}"${a.target === '_blank' || !/^https?:/i.test(a.href) ? ' target="_blank" rel="noopener"' : ''}>${esc(__('Open link', 'bp-site-comments'))}${icon.open}</a>` : '';
   };
   const targetHead = (k, snippet, el) => `<div class="pop__target"><span class="pop__kind"><span class="chip">${esc(k)}</span>${el ? openLink(el) : ''}</span>${snippet ? `<span class="pop__snippet">${esc(snippet.slice(0, 90))}${snippet.length > 90 ? '…' : ''}</span>` : ''}</div>`;
   const avatar = (name, url) => `<span class="avatar" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" width="28" height="28" loading="lazy">` : ''}</span>`;
@@ -469,43 +491,32 @@
     setTimeout(() => ta.focus({ preventScroll: true }), 30);
   };
 
-  const compose = (el, inner = []) => {
+  const compose = (el) => {
     const snippet = snippetFor(el);
-    const wider = el.parentElement && el.parentElement !== doc.body && el.parentElement !== root;
     const pop = popover(el, `
       ${targetHead(kind(el), snippet, el)}
-      ${wider || inner.length ? `<div class="pop__scope">${inner.length ? '<button type="button" class="scope-btn" data-narrow>&minus; Smaller area</button>' : ''}${wider ? '<button type="button" class="scope-btn" data-wider>+ Bigger area</button>' : ''}</div>` : ''}
-      <textarea maxlength="5000" class="input" rows="3" aria-label="Your comment" placeholder="What should change here?"></textarea>
+      <textarea maxlength="5000" class="input" rows="3" aria-label="${esc(__('Your comment', 'bp-site-comments'))}" placeholder="${esc(__('What should change here?', 'bp-site-comments'))}"></textarea>
       <div class="pop__foot">
-        <span class="hint"><kbd>Ctrl</kbd><kbd>Enter</kbd> to post</span>
+        <span class="hint"><kbd>${mac ? '⌘' : 'Ctrl'}</kbd><kbd>Enter</kbd> ${esc(__('to post', 'bp-site-comments'))}</span>
         <span class="pop__actions">
-          <button type="button" class="btn btn--ghost" data-cancel>Cancel</button>
-          <button type="button" class="btn" data-save disabled>Post</button>
+          <button type="button" class="btn btn--ghost" data-cancel>${esc(__('Cancel', 'bp-site-comments'))}</button>
+          <button type="button" class="btn" data-save disabled>${esc(__('Post', 'bp-site-comments'))}</button>
         </span>
       </div>`);
     const ta = pop.querySelector('textarea');
     const save = pop.querySelector('[data-save]');
     submitOnCtrlEnter(ta, save);
     pop.querySelector('[data-cancel]').addEventListener('click', closePopover);
-    // Switching area keeps what was already typed.
-    const rescope = (next, stack) => {
-      const text = ta.value;
-      compose(next, stack);
-      const fresh = openPopover.el.querySelector('textarea');
-      fresh.value = text;
-      fresh.dispatchEvent(new Event('input'));
-    };
-    pop.querySelector('[data-wider]')?.addEventListener('click', () => rescope(el.parentElement, [...inner, el]));
-    pop.querySelector('[data-narrow]')?.addEventListener('click', () => rescope(inner[inner.length - 1], inner.slice(0, -1)));
     save.addEventListener('click', async () => {
-      save.disabled = true; save.textContent = 'Posting…';
+      save.disabled = true; save.textContent = __('Posting…', 'bp-site-comments');
       try {
         const c = stamp(await api('', { method: 'POST', body: { text: ta.value, url: pageUrl(), selector: selectorFor(el), snippet, tag: el.tagName.toLowerCase(), title: doc.title } }));
         comments.push(c);
         closePopover(); updateCounts(); renderPins(); renderPanel();
-        say(editable(c) ? `Comment posted · you can edit it for ${minutesLeft(c)} minutes` : 'Comment posted');
+        /* translators: %d: minutes. */
+        say(editable(c) ? sprintf(_n('Comment posted · you can edit it for %d minute', 'Comment posted · you can edit it for %d minutes', minutesLeft(c), 'bp-site-comments'), minutesLeft(c)) : __('Comment posted', 'bp-site-comments'));
       } catch (err) {
-        say(err.message, true); save.disabled = false; save.textContent = 'Post';
+        say(err.message, true); save.disabled = false; save.textContent = __('Post', 'bp-site-comments');
       }
     });
   };
@@ -513,28 +524,28 @@
   const thread = (c) => {
     const el = findEl(c);
     const n = comments.indexOf(c) + 1;
-    const canResolve = c.mine || cfg.manage;
+    const canResolve = !!c.can_edit;   // The server's answer: the author or a site manager.
     // Every message you wrote (the comment or a reply) has its own Edit and Delete for 15 minutes only.
     // Removing the whole comment with its replies is the Delete button at the bottom.
-    const note = (r) => (editable(r) ? `<p class="msg__window" data-window>You can edit or delete this for ${minutesLeft(r)} more minute${minutesLeft(r) === 1 ? '' : 's'}</p>` : '');
+    const note = (r) => (editable(r) ? `<p class="msg__window" data-window>${esc(sprintf(_n('You can edit or delete this for %d more minute', 'You can edit or delete this for %d more minutes', minutesLeft(r), 'bp-site-comments'), minutesLeft(r)))}</p>` : '');
     const msg = (r, key) => {
-      const acts = editable(r) ? '<button type="button" class="link-btn" data-edit>Edit</button><button type="button" class="link-btn link-btn--danger" data-del>Delete</button>' : '';
+      const acts = editable(r) ? `<button type="button" class="link-btn" data-edit>${esc(__('Edit', 'bp-site-comments'))}</button><button type="button" class="link-btn link-btn--danger" data-del>${esc(__('Delete', 'bp-site-comments'))}</button>` : '';
       return `<li class="msg" data-msg="${esc(key)}">${avatar(r.author, r.avatar)}<div><p class="msg__meta"><b>${esc(r.author)}</b><time datetime="${esc(r.date)}">${ago(r.date)}</time>${acts ? `<span class="msg__acts">${acts}</span>` : ''}</p><p class="msg__text">${rich(r.text)}</p>${note(r)}</div></li>`;
     };
     const pop = popover(el, `
       <div class="pop__head">
         <span class="num">${c.status === 'resolved' ? icon.check : n}</span>
-        ${targetHead(el ? kind(el) : 'Removed', c.snippet, el)}
-        <button type="button" class="icon-btn" data-close aria-label="Close">${icon.close}</button>
+        ${targetHead(el ? kind(el) : __('Removed', 'bp-site-comments'), c.snippet, el)}
+        <button type="button" class="icon-btn" data-close aria-label="${esc(__('Close', 'bp-site-comments'))}">${icon.close}</button>
       </div>
-      ${!el ? '<p class="note">This part of the page has changed since the comment was left.</p>' : ''}
-      <ol class="thread">${msg(c, 'root')}${c.replies.map((x, i) => msg(x, x.id || `old-${i}`)).join('')}</ol>
-      <textarea maxlength="5000" class="input input--reply" rows="2" aria-label="Reply" placeholder="Reply…"></textarea>
+      ${!el ? `<p class="note">${esc(__('This part of the page has changed since the comment was left.', 'bp-site-comments'))}</p>` : ''}
+      <ol class="thread">${msg(c, 'root')}${c.replies.map((x) => msg(x, x.id)).join('')}</ol>
+      <textarea maxlength="5000" class="input input--reply" rows="2" aria-label="${esc(__('Reply', 'bp-site-comments'))}" placeholder="${esc(__('Reply…', 'bp-site-comments'))}"></textarea>
       <div class="pop__foot">
-        <span class="pop__actions">${deletable(c) ? '<button type="button" class="btn btn--ghost btn--danger" data-del-all>Delete</button>' : ''}</span>
+        <span class="pop__actions">${deletable(c) ? `<button type="button" class="btn btn--ghost btn--danger" data-del-all>${esc(__('Delete', 'bp-site-comments'))}</button>` : ''}</span>
         <span class="pop__actions">
-          ${canResolve ? `<button type="button" class="btn btn--ghost" data-status>${c.status === 'resolved' ? 'Reopen' : `${icon.check}Resolve`}</button>` : ''}
-          <button type="button" class="btn" data-reply disabled>Reply</button>
+          ${canResolve ? `<button type="button" class="btn btn--ghost" data-status>${c.status === 'resolved' ? esc(__('Reopen', 'bp-site-comments')) : `${icon.check}${esc(__('Resolve', 'bp-site-comments'))}`}</button>` : ''}
+          <button type="button" class="btn" data-reply disabled>${esc(__('Reply', 'bp-site-comments'))}</button>
         </span>
       </div>`, c.status === 'resolved' ? 'is-resolved' : '');
     pins.querySelector(`[data-id="${c.id}"]`)?.classList.add('is-active');
@@ -567,7 +578,7 @@
       if (editBtn) {
         const m = messageOf(editBtn);
         const body = editBtn.closest('.msg').querySelector('.msg__text');
-        body.outerHTML = `<div class="edit"><textarea maxlength="5000" class="input input--reply" aria-label="Edit your ${m.key === 'root' ? 'comment' : 'reply'}"></textarea><div class="pop__actions"><button type="button" class="btn btn--ghost" data-edit-cancel>Cancel</button><button type="button" class="btn" data-edit-save>Save</button></div></div>`;
+        body.outerHTML = `<div class="edit"><textarea maxlength="5000" class="input input--reply" aria-label="${esc(m.key === 'root' ? __('Edit your comment', 'bp-site-comments') : __('Edit your reply', 'bp-site-comments'))}"></textarea><div class="pop__actions"><button type="button" class="btn btn--ghost" data-edit-cancel>${esc(__('Cancel', 'bp-site-comments'))}</button><button type="button" class="btn" data-edit-save>${esc(__('Save', 'bp-site-comments'))}</button></div></div>`;
         editBtn.closest('.msg__acts')?.remove();
         const box = pop.querySelector('.edit textarea');
         box.value = m.r.text;
@@ -575,9 +586,9 @@
         submitOnCtrlEnter(box, saveEdit);
         pop.querySelector('[data-edit-cancel]').addEventListener('click', () => thread(c));
         saveEdit.addEventListener('click', async () => {
-          if (!box.value.trim()) { say('Write something first, or use Delete.', true); return; }
+          if (!box.value.trim()) { say(__('Write something first, or use Delete.', 'bp-site-comments'), true); return; }
           saveEdit.disabled = true;
-          try { thread(replace(await api(m.path, { method: 'PATCH', body: { text: box.value } }))); say(m.key === 'root' ? 'Comment updated' : 'Reply updated'); }
+          try { thread(replace(await api(m.path, { method: 'PATCH', body: { text: box.value } }))); say(m.key === 'root' ? __('Comment updated', 'bp-site-comments') : __('Reply updated', 'bp-site-comments')); }
           catch (err) { say(err.message, true); saveEdit.disabled = false; }
         });
         return;
@@ -588,7 +599,7 @@
         // A second click confirms, so one slip of the finger does not remove anything.
         if (!delBtn.dataset.sure) {
           delBtn.dataset.sure = '1';
-          delBtn.textContent = m.key === 'root' && c.replies.length ? 'Delete with replies?' : (delBtn.matches('[data-del-all]') ? 'Delete this comment?' : 'Delete for sure?');
+          delBtn.textContent = m.key === 'root' && c.replies.length ? __('Delete with replies?', 'bp-site-comments') : (delBtn.matches('[data-del-all]') ? __('Delete this comment?', 'bp-site-comments') : __('Delete for sure?', 'bp-site-comments'));
           return;
         }
         delBtn.disabled = true;
@@ -597,10 +608,10 @@
             await api(m.path, { method: 'DELETE' });
             comments = comments.filter((x) => x !== c);
             closePopover(); updateCounts(); renderPins(); renderPanel();
-            say('Comment deleted');
+            say(__('Comment deleted', 'bp-site-comments'));
           } else {
             thread(replace(await api(m.path, { method: 'DELETE' })));
-            say('Reply deleted');
+            say(__('Reply deleted', 'bp-site-comments'));
           }
         } catch (err) { say(err.message, true); delBtn.disabled = false; }
       }
@@ -614,7 +625,7 @@
       try {
         const fresh = replace(await api(`/${c.id}`, { method: 'PATCH', body: { status: c.status === 'resolved' ? 'open' : 'resolved' } }));
         closePopover();
-        say(fresh.status === 'resolved' ? 'Marked as resolved' : 'Reopened');
+        say(fresh.status === 'resolved' ? __('Marked as resolved', 'bp-site-comments') : __('Reopened', 'bp-site-comments'));
       } catch (err) { say(err.message, true); }
     });
   };
@@ -625,7 +636,8 @@
     if (!on) return;
     visible().forEach((c) => {
       const n = comments.indexOf(c) + 1;
-      const pin = h('button', { type: 'button', class: `pin${c.status === 'resolved' ? ' is-resolved' : ''}`, 'data-id': c.id, 'aria-label': `Comment ${n} by ${c.author}: ${c.text.slice(0, 80)}` }, c.status === 'resolved' ? icon.check : String(n));
+      const pin = h('button', { type: 'button', class: `pin${c.status === 'resolved' ? ' is-resolved' : ''}`, 'data-id': c.id, /* translators: 1: pin number, 2: author, 3: start of the comment. */
+        'aria-label': sprintf(__('Comment %1$d by %2$s: %3$s', 'bp-site-comments'), n, c.author, c.text.slice(0, 80)) }, c.status === 'resolved' ? icon.check : String(n));
       pin.addEventListener('click', () => { if (!keepDraft()) thread(c); });
       pin.addEventListener('pointerenter', () => { if (!openPopover) drawBox(findEl(c), ''); });
       pin.addEventListener('pointerleave', () => { if (!openPopover) hl.classList.remove('is-on'); });
@@ -699,14 +711,15 @@
   const renderPanel = () => {
     const list = $('[data-panel-list]');
     const items = comments.filter((c) => (tab === 'resolved' ? c.status === 'resolved' : c.status !== 'resolved'));
-    $('[data-panel-count]').textContent = `${openCount()} open`;
-    list.innerHTML = items.length ? '' : `<li class="empty">${tab === 'open' ? 'No open comments on this page.<br>Click anything on the page to add one.' : 'Nothing resolved yet.'}</li>`;
+    /* translators: %d: number of open comments. */
+    $('[data-panel-count]').textContent = sprintf(__('%d open', 'bp-site-comments'), openCount());
+    list.innerHTML = items.length ? '' : `<li class="empty">${tab === 'open' ? `${esc(__('No open comments on this page.', 'bp-site-comments'))}<br>${esc(__('Click anything on the page to add one.', 'bp-site-comments'))}` : esc(__('Nothing resolved yet.', 'bp-site-comments'))}</li>`;
     items.forEach((c) => {
       const li = h('li', {}, `<button type="button" class="row${c.status === 'resolved' ? ' is-resolved' : ''}">
         <span class="num">${c.status === 'resolved' ? icon.check : comments.indexOf(c) + 1}</span>
         <span class="row__body">
           <span class="row__text">${esc(c.text)}</span>
-          <span class="row__meta">${esc(c.author)} · ${ago(c.date)}${c.replies.length ? ` · ${c.replies.length} repl${c.replies.length === 1 ? 'y' : 'ies'}` : ''}${findEl(c) ? '' : ' · <em>element changed</em>'}</span>
+          <span class="row__meta">${esc(c.author)} · ${ago(c.date)}${c.replies.length ? ` · ${esc(sprintf(_n('%d reply', '%d replies', c.replies.length, 'bp-site-comments'), c.replies.length))}` : ''}${findEl(c) ? '' : ` · <em>${esc(__('element changed', 'bp-site-comments'))}</em>`}</span>
         </span></button>`);
       li.firstElementChild.addEventListener('click', () => { if (!keepDraft()) focusComment(c); });
       list.append(li);
@@ -728,7 +741,6 @@
     const wanted = query.get('bp-comment');
     const review = query.has('bp-comments'); // "Review the site" / "Open page" in the dashboard.
     // Comment mode always starts off; only a click (or a link from the dashboard) turns it on.
-    try { sessionStorage.removeItem('bp-sc-on'); } catch (e) { /* storage blocked */ }
     const c = wanted && comments.find((x) => String(x.id) === wanted);
     if (wanted || review) {
       const clean = new URL(location.href);

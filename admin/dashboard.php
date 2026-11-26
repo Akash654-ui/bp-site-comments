@@ -18,18 +18,20 @@ function bp_sc_dashboard_url( array $args = array() ): string {
 
 /** Number of open comments (menu badge, header). */
 function bp_sc_open_count(): int {
-	return count(
-		get_posts(
-			array(
-				'post_type'      => BP_SC_TYPE,
-				'post_status'    => 'publish',
-				'fields'         => 'ids',
-				'posts_per_page' => -1,
-				'meta_key'       => '_bp_sc_status', // phpcs:ignore WordPress.DB.SlowDBQuery
-				'meta_value'     => 'open', // phpcs:ignore WordPress.DB.SlowDBQuery
-			)
+	// A count, not a list: this runs on every wp-admin page for the menu badge.
+	$q = new WP_Query(
+		array(
+			'post_type'              => BP_SC_TYPE,
+			'post_status'            => 'publish',
+			'fields'                 => 'ids',
+			'posts_per_page'         => 1,
+			'update_post_meta_cache' => false,
+			'update_post_term_cache' => false,
+			'meta_key'               => '_bp_sc_status', // phpcs:ignore WordPress.DB.SlowDBQuery
+			'meta_value'             => 'open', // phpcs:ignore WordPress.DB.SlowDBQuery
 		)
 	);
+	return (int) $q->found_posts;
 }
 
 add_action(
@@ -102,7 +104,8 @@ add_action(
 			return;
 		}
 		wp_enqueue_style( 'bp-sc-dashboard', BP_SC_URL . 'admin/dashboard.css', array(), BP_SC_VERSION );
-		wp_enqueue_script( 'bp-sc-dashboard', BP_SC_URL . 'admin/dashboard.js', array(), BP_SC_VERSION, array( 'in_footer' => true ) );
+		wp_enqueue_script( 'bp-sc-dashboard', BP_SC_URL . 'admin/dashboard.js', array( 'wp-i18n' ), BP_SC_VERSION, array( 'in_footer' => true ) );
+		wp_set_script_translations( 'bp-sc-dashboard', 'bp-site-comments', dirname( __DIR__ ) . '/languages' );
 		$trash = wp_count_posts( BP_SC_TYPE );
 		wp_localize_script(
 			'bp-sc-dashboard',
@@ -114,8 +117,7 @@ add_action(
 				'site'     => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
 				'trashUrl' => admin_url( 'edit.php?post_status=trash&post_type=' . BP_SC_TYPE ),
 				'trash'    => (int) ( $trash->trash ?? 0 ),
-				'manage'   => bp_sc_can_manage(),
-				'user'     => wp_get_current_user()->display_name,
+				'window'   => (int) ceil( bp_sc_edit_window() / MINUTE_IN_SECONDS ),
 			)
 		);
 	}

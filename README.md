@@ -15,6 +15,7 @@ Built for client reviews: no screenshots, no "the third paragraph under the seco
 - **Safe clicks.** While Comment mode is on, links and buttons don't fire, so nobody navigates away by accident. To open a link anyway, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click it, middle-click it, or use **Open link** in its comment box (handy on phones).
 - **Fix your own mistakes.** Every message you write (a comment or a reply) has its own Edit and Delete for 15 minutes after posting; a note shows the time left.
 - **Clickable links.** Web addresses and emails typed into comments and replies open in a new tab.
+- **Translation ready.** Every word on the page and in the dashboard can be translated with the `bp-site-comments` text domain; a template is in `languages/bp-site-comments.pot`.
 - **Keyboard friendly.** <kbd>C</kbd> toggles Comment mode, <kbd>Enter</kbd> comments on the outlined element, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> posts, <kbd>Esc</kbd> closes.
 
 ## Requirements
@@ -79,14 +80,15 @@ add_action( 'bp_sc_comment_added', function ( $id ) {
 
 ## REST API
 
-All routes need a logged-in user and the `wp_rest` nonce.
+All routes need a logged-in user and the `wp_rest` nonce. Comments are accepted only for pages of the site itself (extra domains can be allowed with WordPress's `allowed_redirect_hosts` filter). Comments in the trash can only be restored.
 
 | Method | Route | Does |
 | --- | --- | --- |
 | `GET` | `/wp-json/bp-site-comments/v1/comments?url=…` | Comments for a page |
 | `POST` | `/wp-json/bp-site-comments/v1/comments` | New comment (`text`, `url`, `selector`, `snippet`, `tag`, `title`) |
 | `PATCH` | `/wp-json/bp-site-comments/v1/comments/{id}` | Edit `text` (author, within the edit window) or set `status` to `open` / `resolved` |
-| `DELETE` | `/wp-json/bp-site-comments/v1/comments/{id}` | Move a comment to the trash |
+| `DELETE` | `/wp-json/bp-site-comments/v1/comments/{id}` | Move a comment to the trash (its author within the edit window, or a site manager) |
+| `POST` | `/wp-json/bp-site-comments/v1/comments/{id}/restore` | Bring a comment back from the trash (same people who may delete it) |
 | `POST` | `/wp-json/bp-site-comments/v1/comments/{id}/replies` | Add a reply (`text`) |
 | `PATCH` | `/wp-json/bp-site-comments/v1/comments/{id}/replies/{reply}` | Edit your own reply's `text` (within the edit window) |
 | `DELETE` | `/wp-json/bp-site-comments/v1/comments/{id}/replies/{reply}` | Delete a reply (its author within the edit window, or a site manager) |
@@ -95,7 +97,7 @@ All routes need a logged-in user and the `wp_rest` nonce.
 
 Each comment is a private post of type `bp_site_comment`, with its replies stored in post meta. Deleting a comment from the page moves it to *Site Comments › Trash*, where it can be restored.
 
-Deleting the plugin from **Plugins** removes all stored comments. To keep them, add this to `wp-config.php` before deleting:
+Deleting the plugin from **Plugins** removes all stored comments, including those in the trash. To keep them, add this to `wp-config.php` before deleting:
 
 ```php
 define( 'BP_SC_KEEP_DATA', true );
